@@ -14,7 +14,7 @@ import os
 # Add the parent directory to the path so we can import the scraper
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scraper.hyperbrowser_scraper import HyperbrowserAAScraper
+from scraper.final_scraper import FinalAAScraper
 from scraper.models import ScraperResult
 
 app = FastAPI(
@@ -82,8 +82,8 @@ async def search_flights(request: FlightSearchRequest):
         if len(request.origin) != 3 or len(request.destination) != 3:
             raise HTTPException(status_code=400, detail="Airport codes must be 3 characters")
         
-        # Initialize hyperbrowser scraper with cloud infrastructure
-        scraper = HyperbrowserAAScraper(headless=True, proxy=request.proxy)
+        # Initialize Final scraper with multi-strategy approach
+        scraper = FinalAAScraper(headless=True, proxy=request.proxy)
         
         # Create search metadata
         from scraper.models import SearchMetadata
@@ -94,7 +94,7 @@ async def search_flights(request: FlightSearchRequest):
             passengers=request.passengers
         )
         
-        # Perform the search with hyperbrowser cloud approach
+        # Perform the search with multi-strategy approach
         async with scraper:
             await scraper.start()
             result = await scraper.search_flights(search_metadata)

@@ -33,8 +33,7 @@ RUN playwright install-deps chromium
 # Copy application code
 COPY . .
 
-# Create environment file for Hyperbrowser
-RUN echo "HYPERBROWSER_API_KEY=your_api_key_here" > .env
+# No environment variables needed for final scraper
 
 # Expose port
 EXPOSE 8000
