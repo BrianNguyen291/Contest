@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  aa-scraper:
+    build: .
+    container_name: aa-flight-scraper
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./output:/app/output
+    # Example usage:
+    # command: ["--origin", "LAX", "--destination", "JFK", "--date", "2025-12-15", "--output", "/app/output/results.json"]
+    # Uncomment and modify the command above to run specific searches
