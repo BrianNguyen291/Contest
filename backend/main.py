@@ -14,7 +14,7 @@ import os
 # Add the parent directory to the path so we can import the scraper
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scraper.aa_scraper import AAScraper
+from scraper.hyperbrowser_scraper import HyperbrowserAAScraper
 from scraper.models import ScraperResult
 
 app = FastAPI(
@@ -82,27 +82,30 @@ async def search_flights(request: FlightSearchRequest):
         if len(request.origin) != 3 or len(request.destination) != 3:
             raise HTTPException(status_code=400, detail="Airport codes must be 3 characters")
         
-        # Initialize scraper with proper async context
-        async with AAScraper(headless=True, proxy=request.proxy) as scraper:
-            # Create search metadata
-            from scraper.models import SearchMetadata
-            search_metadata = SearchMetadata(
-                origin=request.origin.upper(),
-                destination=request.destination.upper(),
-                date=request.date,
-                passengers=request.passengers
-            )
-            
-            # Perform the search
+        # Initialize hyperbrowser scraper with cloud infrastructure
+        scraper = HyperbrowserAAScraper(headless=True, proxy=request.proxy)
+        
+        # Create search metadata
+        from scraper.models import SearchMetadata
+        search_metadata = SearchMetadata(
+            origin=request.origin.upper(),
+            destination=request.destination.upper(),
+            date=request.date,
+            passengers=request.passengers
+        )
+        
+        # Perform the search with hyperbrowser cloud approach
+        async with scraper:
+            await scraper.start()
             result = await scraper.search_flights(search_metadata)
-            
-            execution_time = time.time() - start_time
-            
-            return FlightSearchResponse(
-                success=True,
-                data=result,
-                execution_time=execution_time
-            )
+        
+        execution_time = time.time() - start_time
+        
+        return FlightSearchResponse(
+            success=True,
+            data=result,
+            execution_time=execution_time
+        )
             
     except Exception as e:
         execution_time = time.time() - start_time
