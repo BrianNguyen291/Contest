@@ -48,11 +48,14 @@ class AviationStackScraper:
             except Exception as e:
                 print(f"⚠️ AviationStack API failed: {e}")
             
-            # Strategy 2: Realistic data generation (fallback)
-            print("🎯 Strategy 2: Realistic data generation (fallback)...")
-            result = await self._generate_realistic_data(search_metadata)
-            print(f"✅ Generated realistic data: {len(result.flights)} flights")
-            return result
+            # Strategy 2: No fallback - return empty results if no real data
+            print("🎯 Strategy 2: No fallback - returning empty results for no real data")
+            return ScraperResult(
+                search_metadata=search_metadata,
+                flights=[],
+                total_results=0,
+                error="No real flight data available from AviationStack API"
+            )
             
         except Exception as e:
             print(f"❌ All strategies failed: {e}")
@@ -226,99 +229,6 @@ class AviationStackScraper:
         
         return max(min_points, min(estimated_points, max_points))
     
-    async def _generate_realistic_data(self, search_metadata: SearchMetadata):
-        """Generate realistic flight data as fallback"""
-        try:
-            print("🎯 Generating realistic flight data based on route patterns...")
-            
-            flights = []
-            
-            # Route-specific patterns
-            route_patterns = {
-                ('LAX', 'JFK'): {
-                    'base_price': 350,
-                    'base_points': 12500,
-                    'duration': 5.5,
-                    'time_variations': [0, 2, 4]
-                },
-                ('LAX', 'ATL'): {
-                    'base_price': 280,
-                    'base_points': 12500,
-                    'duration': 4.0,
-                    'time_variations': [0, 1, 3]
-                },
-                ('JFK', 'LAX'): {
-                    'base_price': 380,
-                    'base_points': 15000,
-                    'duration': 5.5,
-                    'time_variations': [0, 2, 4]
-                }
-            }
-            
-            # Get pattern for this route
-            route_key = (search_metadata.origin, search_metadata.destination)
-            pattern = route_patterns.get(route_key, {
-                'base_price': 300,
-                'base_points': 12500,
-                'duration': 4.0,
-                'time_variations': [0, 1, 2]
-            })
-            
-            # Generate 3 realistic flights
-            for i in range(3):
-                try:
-                    # Calculate realistic pricing
-                    price_variation = 0.8 + (i * 0.2)
-                    cash_price = pattern['base_price'] * price_variation
-                    
-                    # Calculate realistic points
-                    points_variation = 0.9 + (i * 0.1)
-                    points_required = int(pattern['base_points'] * points_variation)
-                    
-                    # Calculate realistic times
-                    departure_hour = 8 + pattern['time_variations'][i]
-                    departure_minute = 0
-                    arrival_hour = departure_hour + int(pattern['duration'])
-                    arrival_minute = 30
-                    
-                    departure_time = f"{departure_hour:02d}:{departure_minute:02d}"
-                    arrival_time = f"{arrival_hour:02d}:{arrival_minute:02d}"
-                    
-                    # Calculate CPP
-                    cpp = calculate_cpp(cash_price, 5.60, points_required)
-                    
-                    flight_data = {
-                        'flight_number': f"AA{1000 + i}",
-                        'departure_time': departure_time,
-                        'arrival_time': arrival_time,
-                        'points_required': points_required,
-                        'cash_price_usd': round(cash_price, 2),
-                        'taxes_fees_usd': 5.60,
-                        'cpp': cpp
-                    }
-                    
-                    flight = Flight(**flight_data)
-                    flights.append(flight)
-                    print(f"✅ Generated realistic flight {flight_data['flight_number']}: CPP {cpp}")
-                    
-                except Exception as e:
-                    print(f"⚠️ Error generating flight {i}: {e}")
-                    continue
-            
-            return ScraperResult(
-                search_metadata=search_metadata,
-                flights=flights,
-                total_results=len(flights)
-            )
-                
-        except Exception as e:
-            print(f"❌ Error generating realistic data: {e}")
-            return ScraperResult(
-                search_metadata=search_metadata,
-                flights=[],
-                total_results=0,
-                error=str(e)
-            )
     
     async def close(self):
         """Close AviationStack scraper"""
