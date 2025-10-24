@@ -1,13 +1,40 @@
 version: '3.8'
 
 services:
-  aa-scraper:
-    build: .
-    container_name: aa-flight-scraper
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
     environment:
-      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
     volumes:
-      - ./output:/app/output
-    # Example usage:
-    # command: ["--origin", "LAX", "--destination", "JFK", "--date", "2025-12-15", "--output", "/app/output/results.json"]
-    # Uncomment and modify the command above to run specific searches
+      - ./scraper:/app/scraper
+      - ./backend:/app/backend
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - app-network
+
+  # Frontend React App
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host 0.0.0.0
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
