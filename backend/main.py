@@ -14,7 +14,7 @@ import os
 # Add the parent directory to the path so we can import the scraper
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scraper.final_scraper import FinalAAScraper
+from scraper.aviationstack_scraper import AviationStackScraper
 from scraper.models import ScraperResult
 
 app = FastAPI(
@@ -82,8 +82,10 @@ async def search_flights(request: FlightSearchRequest):
         if len(request.origin) != 3 or len(request.destination) != 3:
             raise HTTPException(status_code=400, detail="Airport codes must be 3 characters")
         
-        # Initialize Final scraper with multi-strategy approach
-        scraper = FinalAAScraper(headless=True, proxy=request.proxy)
+        # Initialize AviationStack scraper (Real Flight Data + Fallback)
+        scraper = AviationStackScraper(
+            api_key="752995fe6cbcf46883af6b9b31a75aed"
+        )
         
         # Create search metadata
         from scraper.models import SearchMetadata
