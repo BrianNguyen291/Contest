@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from real_mcp_aa_scraper import MCPPlaywrightScraper
+from real_mcp_aa_scraper import RealMCPPlaywrightScraper
 import json
 from datetime import datetime
 
@@ -16,7 +16,11 @@ def test_scraper():
     print("🧪 Testing MCP Scraper...")
     
     try:
-        scraper = MCPPlaywrightScraper()
+        scraper = RealMCPPlaywrightScraper()
+        
+        # Start MCP server
+        print("🚀 Starting MCP server...")
+        scraper.start_mcp_server()
         
         # Test with a simple search
         print("🔍 Testing flight search...")
@@ -24,7 +28,7 @@ def test_scraper():
             origin="LAX",
             destination="JFK", 
             date="2025-12-15",
-            adults=1
+            passengers=1
         )
         
         print(f"✅ Found {len(flights)} flights")

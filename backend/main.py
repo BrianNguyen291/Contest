@@ -19,7 +19,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import our working MCP scraper
-from real_mcp_aa_scraper import MCPPlaywrightScraper
+from real_mcp_aa_scraper import RealMCPPlaywrightScraper
 
 app = FastAPI(
     title="AA Flight Scraper API",
@@ -87,14 +87,17 @@ async def search_flights(request: FlightSearchRequest):
             raise HTTPException(status_code=400, detail="Airport codes must be 3 characters")
         
         # Initialize our working MCP scraper
-        scraper = MCPPlaywrightScraper()
+        scraper = RealMCPPlaywrightScraper()
+        
+        # Start MCP server
+        scraper.start_mcp_server()
         
         # Perform the search with our MCP scraper
         flights = scraper.search_flights(
             origin=request.origin.upper(),
             destination=request.destination.upper(),
             date=request.date,
-            adults=request.passengers
+            passengers=request.passengers
         )
         
         # Format the response to match frontend expectations
