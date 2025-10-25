@@ -6,16 +6,20 @@ Provides REST API endpoints for the web frontend
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import asyncio
 import sys
 import os
+import json
+import subprocess
+import tempfile
+from datetime import datetime
 
 # Add the parent directory to the path so we can import the scraper
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scraper.aviationstack_scraper import AviationStackScraper
-from scraper.models import ScraperResult
+# Import our working MCP scraper
+from real_mcp_aa_scraper import MCPPlaywrightScraper
 
 app = FastAPI(
     title="AA Flight Scraper API",
@@ -41,7 +45,7 @@ class FlightSearchRequest(BaseModel):
 
 class FlightSearchResponse(BaseModel):
     success: bool
-    data: Optional[ScraperResult] = None
+    data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     execution_time: float
 
@@ -82,24 +86,30 @@ async def search_flights(request: FlightSearchRequest):
         if len(request.origin) != 3 or len(request.destination) != 3:
             raise HTTPException(status_code=400, detail="Airport codes must be 3 characters")
         
-        # Initialize AviationStack scraper (Real Flight Data + Fallback)
-        scraper = AviationStackScraper(
-            api_key="752995fe6cbcf46883af6b9b31a75aed"
-        )
+        # Initialize our working MCP scraper
+        scraper = MCPPlaywrightScraper()
         
-        # Create search metadata
-        from scraper.models import SearchMetadata
-        search_metadata = SearchMetadata(
+        # Perform the search with our MCP scraper
+        flights = scraper.search_flights(
             origin=request.origin.upper(),
             destination=request.destination.upper(),
             date=request.date,
-            passengers=request.passengers
+            adults=request.passengers
         )
         
-        # Perform the search with multi-strategy approach
-        async with scraper:
-            await scraper.start()
-            result = await scraper.search_flights(search_metadata)
+        # Format the response to match frontend expectations
+        result = {
+            "search_metadata": {
+                "origin": request.origin.upper(),
+                "destination": request.destination.upper(),
+                "date": request.date,
+                "passengers": request.passengers,
+                "search_timestamp": datetime.now().isoformat()
+            },
+            "flights": flights,
+            "total_results": len(flights),
+            "flights_with_cpp": len([f for f in flights if f.get('cpp') is not None])
+        }
         
         execution_time = time.time() - start_time
         
