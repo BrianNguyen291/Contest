@@ -10,7 +10,6 @@ import os
 import subprocess
 import sys
 import time
-import requests
 import re
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -18,9 +17,6 @@ from typing import Dict, List, Optional
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# ScraperAPI key for final HTML fetching
-SCRAPERAPI_KEY = "6d27e9060aa3db9d1e187dbd8a3277e2"  # Replace with your actual key
 
 class SearchMetadata:
     def __init__(self, origin: str, destination: str, date: str, passengers: int, cabin_class: str):
@@ -277,18 +273,13 @@ class RealMCPPlaywrightScraper:
                 # Use the final snapshot for extraction
                 results_snapshot = final_snapshot
             
-            # STEP 9: Get current URL and fetch HTML from ScraperAPI
-            logger.info("🎫 Step 9: Getting current URL and fetching HTML from ScraperAPI...")
-            current_url = self._get_current_url()
-            logger.info(f"  📍 Current URL: {current_url}")
-            html_content = self._get_html_from_scraperapi(current_url)
+            # STEP 9: Extract flight data using browser_evaluate (MCP)
+            logger.info("🎫 Step 9: Extracting flight data using browser_evaluate...")
+            flights_data = self._extract_flights_with_mcp()
             
-            if not html_content:
-                logger.warning("⚠️ ScraperAPI failed, trying snapshot extraction...")
+            if not flights_data:
+                logger.warning("⚠️ browser_evaluate failed, trying snapshot extraction...")
                 flights_data = self._extract_flights_from_snapshot(str(results_snapshot if results_snapshot else snapshot))
-            else:
-                logger.info(f"✅ Got {len(html_content)} bytes of real HTML")
-                flights_data = self._extract_flights_from_html(html_content)
             
             if not flights_data:
                 logger.error("❌ No flights extracted")
@@ -315,98 +306,127 @@ class RealMCPPlaywrightScraper:
             logger.error(f"❌ Search failed: {e}")
             raise
     
-    def _get_current_url(self) -> str:
-        """Get current URL from MCP browser"""
-        try:
-            # Use browser_evaluate to get current URL
-            result = self._call_mcp_tool('browser_evaluate', function='() => window.location.href')
-            if result and 'content' in result:
-                # Extract URL from the response text
-                response_text = result['content'][0]['text']
-                # Look for URL in quotes
-                import re
-                url_match = re.search(r'"https://[^"]*"', response_text)
-                if url_match:
-                    url = url_match.group(0).strip('"')
-                    logger.info(f"    ✅ Extracted URL: {url}")
-                    return url
-            return self.base_url
-        except Exception as e:
-            logger.warning(f"    ⚠️ Could not get current URL: {e}")
-            return self.base_url
-    
-    def _get_html_from_scraperapi(self, results_url: str = None) -> Optional[str]:
-        """Get HTML content from ScraperAPI"""
-        logger.info("  🌐 Fetching HTML from ScraperAPI...")
-        try:
-            # Use the results URL if provided, otherwise use homepage
-            target_url = results_url or self.base_url
-            logger.info(f"    🎯 Fetching: {target_url}")
-            
-            response = requests.get(
-                f"https://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={target_url}&render=true",
-                headers={"Accept": "text/html"},
-                timeout=30
-            )
-            response.raise_for_status()
-            logger.info(f"    ✅ ScraperAPI returned {len(response.text)} bytes")
-            return response.text
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"    ⚠️ Failed to fetch HTML from ScraperAPI: {e}")
-            return None
-    
-    def _extract_flights_from_html(self, html_content: str) -> List[Dict]:
-        """Extract flight data from HTML content"""
+    def _extract_flights_with_mcp(self) -> List[Dict]:
+        """Extract flight data using browser_evaluate (MCP)"""
         flights = []
-        logger.info("  🔍 Parsing HTML content...")
+        logger.info("  🔍 Using browser_evaluate to extract flight data...")
         
-        # Extract flight numbers
-        flight_matches = re.findall(r'(AA\d{1,4})', html_content)
-        logger.info(f"    Found {len(set(flight_matches))} unique flight numbers")
-        
-        # Extract prices
-        price_matches = re.findall(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', html_content)
-        logger.info(f"    Found {len(price_matches)} prices")
-        
-        # Extract times
-        time_matches = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', html_content)
-        logger.info(f"    Found {len(time_matches)} times")
-        
-        # Extract points
-        points_matches = re.findall(r'(\d{4,6})\s*(?:miles|points|pts)', html_content)
-        logger.info(f"    Found {len(points_matches)} point values")
-        
-        unique_flights = list(set(flight_matches))[:20]
-        
-        for i, flight_num in enumerate(unique_flights):
-            try:
-                price = float(price_matches[i].replace(',', '')) if i < len(price_matches) else 150
-                if price < 50:
-                    price = price * 100
+        try:
+            # JavaScript to extract flight data from the page
+            js_code = """
+            () => {
+                const bodyText = document.body.innerText;
                 
-                dep_time = time_matches[i * 2] if i * 2 < len(time_matches) else f"{(8 + i % 12):02d}:00"
-                arr_time = time_matches[i * 2 + 1] if i * 2 + 1 < len(time_matches) else f"{(16 + i % 12):02d}:30"
+                // Try multiple strategies to find flight numbers
+                let flightNumbers = [];
                 
-                points = int(points_matches[i]) if i < len(points_matches) else 12500
+                // Strategy 1: Direct regex on body text with space after AA
+                const flightRegex1 = /AA\\s*\\d{1,4}/gi;
+                flightNumbers = bodyText.match(flightRegex1) || [];
                 
-                if price > 0 and points > 1000:
-                    cpp = ((price - 5.60) / points) * 100
+                // Strategy 2: Also try looking for "Flight" followed by numbers
+                const flightRegex2 = /Flight\\s+(\\d{1,4})/gi;
+                const flight2Matches = bodyText.match(flightRegex2);
+                if (flight2Matches) {
+                    flight2Matches.forEach(match => {
+                        const num = match.match(/\\d+/)[0];
+                        flightNumbers.push('AA' + num);
+                    });
+                }
+                
+                console.log('Found flights:', flightNumbers);
+                
+                // Find prices
+                const priceRegex = /\\$\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)/g;
+                const prices = bodyText.match(priceRegex) || [];
+                
+                // Find times
+                const timeRegex = /\\b([0-2]?[0-9]:[0-5][0-9])\\b/g;
+                const times = bodyText.match(timeRegex) || [];
+                
+                // Find points
+                const pointsRegex = /(\\d{4,6})\\s*(?:miles|points|pts)/gi;
+                const pointsMatches = bodyText.match(pointsRegex) || [];
+                
+                return JSON.stringify({
+                    flights: [...new Set(flightNumbers)],
+                    prices: prices.map(p => p.replace(/[^0-9.]/g, '')),
+                    times: [...new Set(times)],
+                    points: pointsMatches.map(p => p.replace(/\\D/g, ''))
+                });
+            }
+            """
+            
+            result = self._call_mcp_tool('browser_evaluate', function=js_code)
+            
+            if result and 'content' in result and len(result['content']) > 0:
+                result_text = result['content'][0]['text']
+                logger.info(f"  📋 Raw MCP result: {result_text[:300]}")
+                
+                # Parse the double-quoted JSON from MCP
+                import re
+                json_match = re.search(r'### Result\n(.*?)\n\n###', result_text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1).strip()
+                    logger.info(f"    📄 Extracted JSON: {json_str[:100]}")
                     
-                    flights.append({
-                        "flight_number": flight_num if flight_num.startswith("AA") else f"AA{flight_num}",
-                        "departure_time": dep_time,
-                        "arrival_time": arr_time,
-                        "points_required": points,
-                        "cash_price_usd": round(price, 2),
-                        "taxes_fees_usd": 5.60,
-                        "cpp": round(cpp, 2)
-                    })
-                    logger.info(f"    ✈️ {flight_num}: ${price:.2f} or {points:,} pts (CPP: {cpp:.2f}¢)")
-            except:
-                continue
+                    # Remove outer quotes if present
+                    if json_str.startswith('"') and json_str.endswith('"'):
+                        json_str = json_str[1:-1]
+                    
+                    # Unescape the JSON
+                    json_str = json_str.replace('\\"', '"')
+                    json_str = json_str.replace('\\n', '\n')
+                    
+                    logger.info(f"    📄 After unescape: {json_str[:200]}")
+                    
+                    # Parse the JSON
+                    try:
+                        data = json.loads(json_str)
+                        
+                        logger.info(f"    ✅ Extracted {len(data.get('flights', []))} unique flights")
+                        logger.info(f"    📊 Found {len(data.get('prices', []))} prices, {len(data.get('times', []))} times, {len(data.get('points', []))} points")
+                        
+                        # Process the data
+                        for i, flight_num in enumerate(data.get('flights', [])[:10]):
+                            try:
+                                price_str = data.get('prices', [])[i] if i < len(data.get('prices', [])) else '150'
+                                price = float(price_str.replace(',', ''))
+                                if price < 50:
+                                    price = price * 100
+                                
+                                times_list = data.get('times', [])
+                                dep_time = times_list[i * 2] if i * 2 < len(times_list) else f"{(8 + i % 12):02d}:00"
+                                arr_time = times_list[i * 2 + 1] if i * 2 + 1 < len(times_list) else f"{(16 + i % 12):02d}:30"
+                                
+                                points_list = data.get('points', [])
+                                points = int(points_list[i]) if i < len(points_list) and points_list[i] else 12500
+                                
+                                if price > 0 and points > 1000:
+                                    cpp = ((price - 5.60) / points) * 100
+                                    flights.append({
+                                        "flight_number": flight_num,
+                                        "departure_time": dep_time,
+                                        "arrival_time": arr_time,
+                                        "points_required": points,
+                                        "cash_price_usd": round(price, 2),
+                                        "taxes_fees_usd": 5.60,
+                                        "cpp": round(cpp, 2)
+                                    })
+                            except Exception as e:
+                                logger.warning(f"    ⚠️ Error processing flight {i}: {e}")
+                                continue
+                        
+                        logger.info(f"  ✅ Extracted {len(flights)} flights from MCP")
+                        return flights
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"    ⚠️ JSON parse error: {e}")
+        except Exception as e:
+            logger.warning(f"    ⚠️ MCP extraction failed: {e}")
+            import traceback
+            logger.warning(f"    📋 Traceback: {traceback.format_exc()}")
         
-        logger.info(f"  ✅ Extracted {len(flights)} flights from HTML")
-        return flights
+        return []
     
     def _extract_flights_from_snapshot(self, snapshot_text: str) -> List[Dict]:
         """Extract flight data from MCP snapshot"""
