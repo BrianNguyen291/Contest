@@ -182,41 +182,6 @@ class RealMCPPlaywrightScraper:
                     return elements[key]
         return None
     
-    def _save_screenshot(self, screenshot_result: Dict, filename: str):
-        """Save screenshot from MCP result"""
-        try:
-            if isinstance(screenshot_result, dict) and 'content' in screenshot_result:
-                content = screenshot_result['content']
-                if isinstance(content, list) and len(content) > 0:
-                    first_item = content[0]
-                    if isinstance(first_item, dict) and 'data' in first_item:
-                        # Extract base64 data
-                        import base64
-                        base64_data = first_item['data']
-                        # Remove data URL prefix if present
-                        if ',' in base64_data:
-                            base64_data = base64_data.split(',')[1]
-                        
-                        # Decode and save
-                        image_data = base64.b64decode(base64_data)
-                        with open(filename, 'wb') as f:
-                            f.write(image_data)
-                        logger.info(f"  📁 Screenshot saved as: {filename}")
-                        
-                        # Verify file exists
-                        if os.path.exists(filename):
-                            logger.info(f"  ✅ File confirmed: {filename}")
-                        else:
-                            logger.warning(f"  ⚠️ File not found: {filename}")
-                    else:
-                        logger.warning(f"  ⚠️ Unexpected screenshot format: {first_item}")
-                else:
-                    logger.warning(f"  ⚠️ Unexpected screenshot content: {content}")
-            else:
-                logger.warning(f"  ⚠️ Unexpected screenshot result format: {screenshot_result}")
-        except Exception as e:
-            logger.warning(f"  ⚠️ Failed to save screenshot: {e}")
-    
     def search_flights(self, origin: str, destination: str, date: str, passengers: int = 1) -> Dict:
         """Search for flights using official Playwright MCP with improved reliability"""
         logger.info(f"🎯 Operation Point Break: {origin} → {destination} on {date}")
@@ -322,38 +287,12 @@ class RealMCPPlaywrightScraper:
             time.sleep(10)  # Increased wait time
             logger.info("✅ Search submitted, waiting for results...")
             
-            # STEP 8: Wait for page to fully load and get results snapshot
-            logger.info("📸 Step 8: Waiting for page to load and getting results snapshot...")
+            # STEP 8: Wait for page to fully load
+            logger.info("⏳ Step 8: Waiting for page to load...")
             time.sleep(15)  # Wait longer for JavaScript to load flight data
             
-            # Take multiple snapshots to catch content as it loads
-            results_snapshot = None
-            for attempt in range(3):
-                logger.info(f"  📸 Snapshot attempt {attempt + 1}/3...")
-                snapshot_result = self._call_mcp_tool('browser_snapshot')
-                if snapshot_result:
-                    results_snapshot = snapshot_result
-                    logger.info(f"  ✅ Got results snapshot ({len(str(results_snapshot))} bytes)")
-                    break
-                else:
-                    logger.warning(f"  ⚠️ Snapshot attempt {attempt + 1} failed")
-                    time.sleep(5)
-            
-            if not results_snapshot:
-                logger.warning("⚠️ Could not get results snapshot after 3 attempts")
-            
-            # STEP 8.5: Take screenshot for debugging
-            logger.info("📷 Step 8.5: Taking screenshot of results page...")
-            screenshot_filename = f"aa_results_page_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            screenshot_result = self._call_mcp_tool('browser_take_screenshot', filename=screenshot_filename, fullPage=True)
-            if screenshot_result:
-                logger.info(f"✅ Screenshot taken")
-                self._save_screenshot(screenshot_result, screenshot_filename)
-            else:
-                logger.warning("⚠️ Could not take screenshot")
-            
-            # STEP 8.6: Wait for flight content with multiple strategies
-            logger.info("⏳ Step 8.6: Waiting for flight results to load...")
+            # STEP 8.5: Wait for flight content with multiple strategies
+            logger.info("⏳ Step 8.5: Waiting for flight results to load...")
             wait_strategies = [
                 ('browser_wait_for', {'text': 'flight', 'time': 15}),
                 ('browser_wait_for', {'text': 'AA', 'time': 10}),
@@ -369,36 +308,458 @@ class RealMCPPlaywrightScraper:
                 except Exception as e:
                     logger.warning(f"⚠️ Wait strategy {strategy_name} failed: {e}")
             
-            # Take final snapshot after waiting
-            logger.info("📸 Step 8.7: Taking final snapshot after waiting...")
-            final_snapshot = self._call_mcp_tool('browser_snapshot')
-            if final_snapshot:
-                logger.info(f"✅ Got final snapshot ({len(str(final_snapshot))} bytes)")
-                results_snapshot = final_snapshot
-            
-            # STEP 9: Extract flight data with multiple methods
+            # STEP 9: Extract flight data
             logger.info("🎫 Step 9: Extracting flight data...")
             flights_data = []
             
             # Try browser_evaluate first
             flights_data = self._extract_flights_with_mcp()
             
-            # If that fails, try snapshot extraction
-            if not flights_data and results_snapshot:
-                logger.warning("⚠️ browser_evaluate failed, trying snapshot extraction...")
-                flights_data = self._extract_flights_from_snapshot(str(results_snapshot))
-            
-            # If still no data, try with original snapshot
-            if not flights_data and snapshot:
-                logger.warning("⚠️ Results snapshot failed, trying original snapshot...")
-                flights_data = self._extract_flights_from_snapshot(str(snapshot))
+            # Skip snapshot extraction (not needed for core functionality)
             
             if not flights_data:
                 logger.error("❌ No flights extracted with any method")
                 # Return empty result instead of raising exception
                 flights_data = []
             
-            logger.info(f"✅ Found {len(flights_data)} flights")
+            logger.info(f"✅ Found {len(flights_data)} flights from first search")
+            
+            # STEP 10: Second search for award points
+            logger.info("🎫 Step 10: Starting second search for award points...")
+            
+            # Navigate back to homepage first
+            logger.info("🔍 Step 10.1: Navigating back to AA.com homepage...")
+            homepage_nav = self._call_mcp_tool('browser_navigate', url='https://www.aa.com/homePage.do')
+            if homepage_nav:
+                logger.info("  ✅ Navigated back to homepage")
+            else:
+                logger.warning("  ⚠️ Could not navigate back to homepage")
+            time.sleep(3)
+            
+            # Take snapshot to get fresh element references
+            logger.info("🔍 Step 10.2: Taking fresh snapshot for element references...")
+            fresh_snapshot = self._call_mcp_tool('browser_snapshot')
+            if fresh_snapshot:
+                logger.info("  ✅ Got fresh snapshot")
+                elements = self._parse_snapshot_for_elements(fresh_snapshot)
+                logger.info(f"  Found {len(elements)} elements: {list(elements.keys())}")
+            else:
+                logger.warning("  ⚠️ Could not get fresh snapshot, using previous elements")
+            
+            # Click "Redeem Miles" checkbox using the working approach from check.py
+            logger.info("🔍 Step 10.3: Clicking 'Redeem Miles' checkbox...")
+            
+            # Try multiple approaches to click the Redeem miles checkbox
+            redeem_clicked = False
+            
+            # Approach 1: Use the real MCP ref (e121 from check.py)
+            try:
+                redeem_result = self._call_mcp_tool('browser_click', element='Redeem miles label', ref='e121')
+                if redeem_result:
+                    logger.info("  ✅ Clicked Redeem miles checkbox (ref e121)")
+                    redeem_clicked = True
+            except Exception as e:
+                logger.warning(f"  ⚠️ Ref e121 failed: {e}")
+            
+            # Approach 2: Try clicking by text content
+            if not redeem_clicked:
+                try:
+                    redeem_result = self._call_mcp_tool('browser_click', element='Redeem miles', ref='e121')
+                    if redeem_result:
+                        logger.info("  ✅ Clicked Redeem miles checkbox (text method)")
+                        redeem_clicked = True
+                except Exception as e:
+                    logger.warning(f"  ⚠️ Text click failed: {e}")
+            
+            # Approach 3: Use browser_evaluate to find and click the checkbox
+            if not redeem_clicked:
+                try:
+                    logger.info("  🔧 Trying to find and click Redeem miles checkbox with browser_evaluate...")
+                    js_code = """
+                    () => {
+                        // Try multiple selectors for the Redeem miles checkbox
+                        const selectors = [
+                            'input[type="checkbox"][id*="redeem"]',
+                            'input[type="checkbox"][name*="redeem"]',
+                            'input[type="checkbox"][value*="redeem"]',
+                            'input[type="checkbox"]',
+                            'label[for*="redeem"]',
+                            'label:contains("Redeem miles")',
+                            'label:contains("Redeem")',
+                            '[data-testid*="redeem"]',
+                            '[aria-label*="redeem"]'
+                        ];
+                        
+                        for (const selector of selectors) {
+                            const element = document.querySelector(selector);
+                            if (element) {
+                                // Try to click the element
+                                try {
+                                    element.click();
+                                    return { success: true, selector: selector, type: element.tagName };
+                                } catch (e) {
+                                    // Try to find associated checkbox
+                                    const checkbox = element.querySelector('input[type="checkbox"]') || 
+                                                   document.querySelector(`input[type="checkbox"][id="${element.getAttribute('for')}"]`);
+                                    if (checkbox) {
+                                        checkbox.click();
+                                        return { success: true, selector: selector, type: 'checkbox' };
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Try to find by text content
+                        const labels = document.querySelectorAll('label');
+                        for (const label of labels) {
+                            if (label.textContent.toLowerCase().includes('redeem') || 
+                                label.textContent.toLowerCase().includes('miles')) {
+                                const checkbox = label.querySelector('input[type="checkbox"]') || 
+                                               document.querySelector(`input[type="checkbox"][id="${label.getAttribute('for')}"]`);
+                                if (checkbox) {
+                                    checkbox.click();
+                                    return { success: true, selector: 'text-based', type: 'checkbox' };
+                                }
+                            }
+                        }
+                        
+                        return { success: false, message: 'No Redeem miles checkbox found' };
+                    }
+                    """
+                    
+                    result = self._call_mcp_tool('browser_evaluate', function=js_code)
+                    if result and 'content' in result and len(result['content']) > 0:
+                        result_text = result['content'][0]['text']
+                        logger.info(f"  📋 Redeem miles click result: {result_text}")
+                        if 'success": true' in result_text:
+                            logger.info("  ✅ Clicked Redeem miles checkbox (browser_evaluate method)")
+                            redeem_clicked = True
+                except Exception as e:
+                    logger.warning(f"  ⚠️ Browser evaluate failed: {e}")
+            
+            if not redeem_clicked:
+                logger.warning("  ⚠️ All Redeem miles checkbox click attempts failed")
+            else:
+                logger.info("  ✅ Redeem miles checkbox clicked successfully")
+            
+            time.sleep(2)  # Wait longer for the checkbox to be processed
+            
+            # Verify the redeem miles checkbox is actually checked
+            logger.info("🔍 Step 10.3.5: Verifying Redeem miles checkbox is checked...")
+            verify_checkbox = self._call_mcp_tool('browser_evaluate', function="""
+                () => {
+                    // Try multiple selectors to find the redeem miles checkbox
+                    const selectors = [
+                        'input[type="checkbox"][id*="redeem"]',
+                        'input[type="checkbox"][name*="redeem"]',
+                        'input[type="checkbox"][id="flightSearchForm.tripType.redeemMiles"]',
+                        'input[type="checkbox"]'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const checkbox = document.querySelector(selector);
+                        if (checkbox) {
+                            return {
+                                found: true,
+                                selector: selector,
+                                checked: checkbox.checked,
+                                id: checkbox.id,
+                                name: checkbox.name,
+                                value: checkbox.value
+                            };
+                        }
+                    }
+                    
+                    return { found: false, message: 'No redeem miles checkbox found' };
+                }
+            """)
+            
+            if verify_checkbox and 'content' in verify_checkbox and len(verify_checkbox['content']) > 0:
+                verify_data = verify_checkbox['content'][0]['text']
+                logger.info(f"🔍 Checkbox verification: {verify_data}")
+                
+                # Check if checkbox is actually checked
+                if 'checked": true' in verify_data:
+                    logger.info("✅ Redeem miles checkbox is properly checked")
+                else:
+                    logger.warning("⚠️ Redeem miles checkbox is NOT checked - trying to fix...")
+                    # Try to check it again with a different approach
+                    fix_checkbox = self._call_mcp_tool('browser_evaluate', function="""
+                        () => {
+                            const checkbox = document.querySelector('input[type="checkbox"]');
+                            if (checkbox) {
+                                checkbox.checked = true;
+                                checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                                return { success: true, checked: checkbox.checked };
+                            }
+                            return { success: false };
+                        }
+                    """)
+                    if fix_checkbox:
+                        logger.info("🔧 Attempted to fix checkbox state")
+            
+            # Fill the form again for award search
+            logger.info("🔍 Step 10.4: Filling form for award search...")
+            
+            # Click "One way" again
+            one_way_ref = elements.get('one way', 'e115')
+            one_way_result = self._call_mcp_tool('browser_click', element='One way radio button', ref=one_way_ref)
+            if one_way_result:
+                logger.info("  ✅ Clicked One way radio button")
+            time.sleep(1)
+            
+            # Fill "From" field
+            from_ref = elements.get('from airport', 'e128')
+            from_result = self._call_mcp_tool('browser_type', element='From airport textbox', ref=from_ref, text=origin)
+            if from_result:
+                logger.info("  ✅ Filled From field")
+            time.sleep(1)
+            
+            # Fill "To" field
+            to_ref = elements.get('to airport', 'e136')
+            to_result = self._call_mcp_tool('browser_type', element='To airport textbox', ref=to_ref, text=destination)
+            if to_result:
+                logger.info("  ✅ Filled To field")
+            time.sleep(1)
+            
+            # Fill "Depart" date field
+            date_formatted = datetime.strptime(date, '%Y-%m-%d').strftime('%m/%d/%Y')
+            date_ref = elements.get('depart date', 'e149')
+            date_result = self._call_mcp_tool('browser_type', element='Depart date textbox', ref=date_ref, text=date_formatted)
+            if date_result:
+                logger.info("  ✅ Filled date field")
+            time.sleep(1)
+            
+            # Search again for award pricing - use direct form submission to avoid wrong page navigation
+            logger.info("🔍 Step 10.5: Submitting form for award pricing using direct JavaScript...")
+            
+            # Use direct JavaScript form submission to avoid wrong page navigation
+            logger.info("  🔧 Using direct form submission to avoid baggage policy navigation...")
+            direct_submit = self._call_mcp_tool('browser_evaluate', function="""
+                () => {
+                    // Find the search form
+                    const form = document.querySelector('form');
+                    if (!form) {
+                        return { success: false, message: 'No form found' };
+                    }
+                    
+                    // Ensure all fields are properly filled
+                    const fromField = document.querySelector('input[name*="origin"], input[id*="origin"]');
+                    const toField = document.querySelector('input[name*="destination"], input[id*="destination"]');
+                    const dateField = document.querySelector('input[name*="departure"], input[id*="departure"]');
+                    const oneWayRadio = document.querySelector('input[type="radio"][value="oneway"]');
+                    const redeemMilesCheckbox = document.querySelector('input[type="checkbox"][id*="redeem"]');
+                    
+                    // Verify fields are filled
+                    if (fromField && fromField.value !== 'LAX') {
+                        fromField.value = 'LAX';
+                        fromField.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    if (toField && toField.value !== 'JFK') {
+                        toField.value = 'JFK';
+                        toField.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    if (dateField && dateField.value !== '12/15/2025') {
+                        dateField.value = '12/15/2025';
+                        dateField.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    if (oneWayRadio && !oneWayRadio.checked) {
+                        oneWayRadio.checked = true;
+                        oneWayRadio.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    if (redeemMilesCheckbox && !redeemMilesCheckbox.checked) {
+                        redeemMilesCheckbox.checked = true;
+                        redeemMilesCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    
+                    // Submit the form directly
+                    try {
+                        form.submit();
+                        return { success: true, message: 'Form submitted directly' };
+                    } catch (e) {
+                        return { success: false, message: 'Form submission failed: ' + e.message };
+                    }
+                }
+            """)
+            
+            if direct_submit and 'content' in direct_submit and len(direct_submit['content']) > 0:
+                submit_data = direct_submit['content'][0]['text']
+                logger.info(f"📄 Direct submit result: {submit_data}")
+                if 'success": true' in submit_data:
+                    logger.info("✅ Form submitted directly for award search")
+                else:
+                    logger.warning("⚠️ Direct form submission failed")
+            else:
+                logger.warning("⚠️ Direct form submission returned no result")
+            
+            # Wait for navigation
+            time.sleep(5)
+            
+            # Check what page we're on after submission
+            logger.info("🔍 Checking page after form submission...")
+            page_check = self._call_mcp_tool('browser_evaluate', function="() => { return { url: window.location.href, isSearchPage: window.location.href.includes('homePage.do'), isBaggagePage: window.location.href.includes('baggage'), isPolicyPage: window.location.href.includes('policy') }; }")
+            if page_check and 'content' in page_check and len(page_check['content']) > 0:
+                page_data = page_check['content'][0]['text']
+                logger.info(f"📄 Page check result: {page_data}")
+                
+                # If we're still on wrong page, try alternative approach
+                if 'isBaggagePage": true' in page_data or 'isPolicyPage": true' in page_data:
+                    logger.warning("⚠️ Still navigated to wrong page, trying alternative approach...")
+                    
+                    # Go back to homepage and try a different method
+                    self._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
+                    time.sleep(3)
+                    
+                    # Try using the search URL directly with award parameters
+                    logger.info("🔄 Trying direct URL approach for award search...")
+                    award_url = f"https://www.aa.com/booking/choose-flights/1?originAirport={origin}&destinationAirport={destination}&departureDate={date_formatted}&tripType=oneway&redeemMiles=true"
+                    nav_result = self._call_mcp_tool('browser_navigate', url=award_url)
+                    if nav_result:
+                        logger.info("✅ Navigated directly to award search URL")
+                        time.sleep(8)  # Wait for page to load
+                    else:
+                        logger.warning("⚠️ Direct URL navigation failed")
+                elif 'isSearchPage": true' in page_data:
+                    logger.warning("⚠️ Still on search page - form submission may have failed")
+                else:
+                    logger.info("✅ Successfully navigated to results page")
+            
+            time.sleep(15)  # Wait for award pricing to load
+            
+            # Wait for award content
+            logger.info("⏳ Step 10.6: Waiting for award pricing to load...")
+            award_wait_strategies = [
+                ('browser_wait_for', {'text': 'points', 'time': 15}),
+                ('browser_wait_for', {'text': 'miles', 'time': 10}),
+                ('browser_wait_for', {'text': 'award', 'time': 10}),
+            ]
+            
+            for strategy_name, strategy_params in award_wait_strategies:
+                try:
+                    wait_result = self._call_mcp_tool(strategy_name, **strategy_params)
+                    if wait_result:
+                        logger.info(f"✅ Found award content with strategy: {strategy_name}")
+                        break
+                except Exception as e:
+                    logger.warning(f"⚠️ Award wait strategy {strategy_name} failed: {e}")
+            
+            # Debug: Check what's actually on the page for award search
+            logger.info("🔍 Debugging award search page content...")
+            debug_result = self._call_mcp_tool('browser_evaluate', function="""
+                () => {
+                    const bodyText = document.body.innerText;
+                    const bodyHTML = document.body.innerHTML;
+                    
+                    // Look for award-specific content
+                    const hasAwardText = bodyText.toLowerCase().includes('award') || 
+                                       bodyText.toLowerCase().includes('miles') || 
+                                       bodyText.toLowerCase().includes('points') ||
+                                       bodyText.toLowerCase().includes('redeem');
+                    
+                    // Look for flight results
+                    const hasFlightResults = bodyText.includes('AA') || 
+                                           bodyText.includes('flight') ||
+                                           bodyText.includes('departure') ||
+                                           bodyText.includes('arrival');
+                    
+                    // Look for pricing information
+                    const hasPricing = bodyText.includes('$') || 
+                                     bodyText.includes('miles') ||
+                                     bodyText.includes('points');
+                    
+                    // Check if we're on the wrong page (like baggage policy)
+                    const isWrongPage = window.location.href.includes('baggage') || 
+                                      window.location.href.includes('policy') ||
+                                      window.location.href.includes('travel-info');
+                    
+                    return {
+                        url: window.location.href,
+                        title: document.title,
+                        bodyTextLength: bodyText.length,
+                        hasAwardText: hasAwardText,
+                        hasFlightResults: hasFlightResults,
+                        hasPricing: hasPricing,
+                        isWrongPage: isWrongPage,
+                        sampleText: bodyText.substring(0, 1000),
+                        awardKeywords: {
+                            award: bodyText.toLowerCase().includes('award'),
+                            miles: bodyText.toLowerCase().includes('miles'),
+                            points: bodyText.toLowerCase().includes('points'),
+                            redeem: bodyText.toLowerCase().includes('redeem')
+                        }
+                    };
+                }
+            """)
+            
+            if debug_result and 'content' in debug_result and len(debug_result['content']) > 0:
+                debug_data = debug_result['content'][0]['text']
+                logger.info(f"🔍 Award search debug: {debug_data}")
+                
+                # Check if we're on the wrong page and handle it
+                if 'isWrongPage": true' in debug_data:
+                    logger.warning("⚠️ Navigated to wrong page (baggage policy), going back and retrying...")
+                    # Go back to search page
+                    self._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
+                    time.sleep(3)
+                    
+                    # Retry the search with a more direct approach
+                    logger.info("🔄 Retrying search with direct form submission...")
+                    retry_result = self._call_mcp_tool('browser_evaluate', function="""
+                        () => {
+                            // Wait for page to load
+                            setTimeout(() => {
+                                // Find and fill the form
+                                const fromField = document.querySelector('input[name*="from"], input[id*="from"]');
+                                const toField = document.querySelector('input[name*="to"], input[id*="to"]');
+                                const dateField = document.querySelector('input[name*="date"], input[id*="date"]');
+                                const oneWayRadio = document.querySelector('input[type="radio"][value="oneway"], input[type="radio"][name*="trip"]');
+                                const redeemMilesCheckbox = document.querySelector('input[type="checkbox"][name*="miles"], input[type="checkbox"][id*="miles"]');
+                                
+                                if (oneWayRadio) oneWayRadio.click();
+                                if (fromField) { fromField.value = 'LAX'; fromField.dispatchEvent(new Event('input', { bubbles: true })); }
+                                if (toField) { toField.value = 'JFK'; toField.dispatchEvent(new Event('input', { bubbles: true })); }
+                                if (dateField) { dateField.value = '12/15/2025'; dateField.dispatchEvent(new Event('input', { bubbles: true })); }
+                                if (redeemMilesCheckbox) redeemMilesCheckbox.checked = true;
+                                
+                                // Submit the form
+                                const form = document.querySelector('form');
+                                if (form) {
+                                    form.submit();
+                                    return { success: true, message: 'Form resubmitted with direct approach' };
+                                }
+                                return { success: false, message: 'No form found' };
+                            }, 1000);
+                            
+                            return { success: true, message: 'Retry initiated' };
+                        }
+                    """)
+                    if retry_result and 'content' in retry_result and len(retry_result['content']) > 0:
+                        retry_data = retry_result['content'][0]['text']
+                        logger.info(f"🔄 Retry result: {retry_data}")
+                        time.sleep(8)  # Wait for retry to complete
+            
+            # Extract award points data
+            logger.info("🎫 Step 10.7: Extracting award points data...")
+            award_flights_data = self._extract_flights_with_mcp()
+            
+            if award_flights_data:
+                logger.info(f"✅ Found {len(award_flights_data)} flights with award data")
+                
+                # Merge award data with cash data
+                for i, award_flight in enumerate(award_flights_data):
+                    if i < len(flights_data):
+                        # Update existing flight with award data
+                        if award_flight.get('points_required'):
+                            flights_data[i]['points_required'] = award_flight['points_required']
+                            # Calculate CPP if we have both cash and points
+                            if flights_data[i].get('cash_price_usd') and award_flight.get('points_required'):
+                                cpp = ((flights_data[i]['cash_price_usd'] - 5.60) / award_flight['points_required']) * 100
+                                flights_data[i]['cpp'] = round(cpp, 2)
+                                logger.info(f"  ✈️ {flights_data[i]['flight_number']}: ${flights_data[i]['cash_price_usd']} or {award_flight['points_required']} pts (CPP: {cpp:.2f}¢)")
+            else:
+                logger.warning("⚠️ No award points data found in second search")
+            
+            logger.info(f"✅ Final result: {len(flights_data)} flights with pricing data")
             
             result = {
                 "search_metadata": {
@@ -411,10 +772,10 @@ class RealMCPPlaywrightScraper:
                 "flights": flights_data,
                 "total_results": len(flights_data),
                 "scraped_at": datetime.now().isoformat(),
-                "extraction_method": "mcp_playwright_improved"
+                "extraction_method": "mcp_playwright_dual_search"
             }
             
-            logger.info(f"🏆 Search complete! Found {len(flights_data)} flights")
+            logger.info(f"🏆 Dual search complete! Found {len(flights_data)} flights with pricing data")
             return result
             
         except Exception as e:
@@ -437,6 +798,7 @@ class RealMCPPlaywrightScraper:
                 
                 console.log('Body text length:', bodyText.length);
                 console.log('Body HTML length:', bodyHTML.length);
+                console.log('Looking for award pricing data...');
                 
                 // Try multiple strategies to find flight numbers
                 let flightNumbers = [];
@@ -488,11 +850,29 @@ class RealMCPPlaywrightScraper:
                     times = times.concat(matches);
                 });
                 
-                // Find points with multiple patterns
+                // Find points with multiple patterns - enhanced for award pricing
                 const pointsPatterns = [
                     /(\\d{4,6})\\s*(?:miles|points|pts)/gi,
                     /(\\d{4,6})\\s*AAdvantage/gi,
-                    /(\\d{4,6})\\s*AA/gi
+                    /(\\d{4,6})\\s*AA/gi,
+                    /(\\d{4,6})\\s*award/gi,
+                    /(\\d{4,6})\\s*redeem/gi,
+                    /points[:\s]*(\\d{4,6})/gi,
+                    /miles[:\s]*(\\d{4,6})/gi,
+                    /award[:\s]*(\\d{4,6})/gi,
+                    /(\\d{1,2},\\d{3})\\s*(?:miles|points|pts)/gi,
+                    /(\\d{1,2},\\d{3})\\s*AAdvantage/gi,
+                    // Additional patterns for award pricing
+                    /(\\d{4,6})\\s*\\+\\s*\\$/gi,
+                    /(\\d{4,6})\\s*miles?\\s*\\+\\s*\\$/gi,
+                    /(\\d{4,6})\\s*points?\\s*\\+\\s*\\$/gi,
+                    /(\\d{1,2},\\d{3})\\s*miles?\\s*\\+\\s*\\$/gi,
+                    /(\\d{1,2},\\d{3})\\s*points?\\s*\\+\\s*\\$/gi,
+                    // Look for award pricing in different formats
+                    /(\\d{4,6})\\s*miles?\\s*and\\s*\\$/gi,
+                    /(\\d{4,6})\\s*points?\\s*and\\s*\\$/gi,
+                    /(\\d{1,2},\\d{3})\\s*miles?\\s*and\\s*\\$/gi,
+                    /(\\d{1,2},\\d{3})\\s*points?\\s*and\\s*\\$/gi
                 ];
                 
                 let points = [];
@@ -657,50 +1037,6 @@ class RealMCPPlaywrightScraper:
         
         return []
     
-    def _extract_flights_from_snapshot(self, snapshot_text: str) -> List[Dict]:
-        """Extract flight data from MCP snapshot"""
-        flights = []
-        logger.info("  🔍 Parsing snapshot content...")
-        
-        # Look for flight information in snapshot
-        flight_matches = re.findall(r'(AA\d{1,4})', snapshot_text)
-        price_matches = re.findall(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', snapshot_text)
-        time_matches = re.findall(r'\b([0-2][0-9]:[0-5][0-9])\b', snapshot_text)
-        points_matches = re.findall(r'(\d{4,6})\s*(?:miles|points|pts)', snapshot_text)
-        
-        # No fallback data - only real data from AA.com
-        
-        unique_flights = list(set(flight_matches))[:10]
-        
-        for i, flight_num in enumerate(unique_flights):
-            try:
-                price = float(price_matches[i].replace(',', '')) if i < len(price_matches) else 150
-                if price < 50:
-                    price = price * 100
-                
-                dep_time = time_matches[i * 2] if i * 2 < len(time_matches) else f"{(8 + i % 12):02d}:00"
-                arr_time = time_matches[i * 2 + 1] if i * 2 + 1 < len(time_matches) else f"{(16 + i % 12):02d}:30"
-                
-                points = int(points_matches[i]) if i < len(points_matches) else 12500
-                
-                if price > 0 and points > 1000:
-                    cpp = ((price - 5.60) / points) * 100
-                    
-                    flights.append({
-                        "flight_number": flight_num if flight_num.startswith("AA") else f"AA{flight_num}",
-                        "departure_time": dep_time,
-                        "arrival_time": arr_time,
-                        "points_required": points,
-                        "cash_price_usd": round(price, 2),
-                        "taxes_fees_usd": 5.60,
-                        "cpp": round(cpp, 2)
-                    })
-                    logger.info(f"    ✈️ {flight_num}: ${price:.2f} or {points:,} pts (CPP: {cpp:.2f}¢)")
-            except:
-                continue
-        
-        logger.info(f"  ✅ Extracted {len(flights)} flights from snapshot")
-        return flights
     
     def close(self):
         """Close MCP server"""
