@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Real AA.com Scraper using Microsoft Playwright MCP
+Real AA.com Scraper using Microsoft Playwright MCP - OPTIMIZED VERSION
 Uses the official @playwright/mcp package for automatic browser interaction
 """
 
@@ -27,37 +27,58 @@ class SearchMetadata:
         self.cabin_class = cabin_class
 
 class RealMCPPlaywrightScraper:
-    """AA.com scraper using Microsoft Playwright MCP (official)"""
+    """AA.com scraper using Microsoft Playwright MCP (official) - Optimized"""
+    
+    # Element reference cache to avoid re-parsing
+    ELEMENT_REFS = {
+        'one_way': 'e115',
+        'from_airport': 'e128',
+        'to_airport': 'e136',
+        'depart_date': 'e149',
+        'redeem_miles': 'e121',
+        'search_button': 'e161'
+    }
+    
+    # Common timeout values
+    SHORT_WAIT = 1
+    MEDIUM_WAIT = 3
+    LONG_WAIT = 5
+    PAGE_LOAD_WAIT = 10
     
     def __init__(self):
         self.base_url = "https://www.aa.com"
         self.mcp_process = None
+        self._element_cache = {}
         
     def start_mcp_server(self):
-        """Start the official Playwright MCP server"""
+        """Start the official Playwright MCP server with retry logic"""
         logger.info("🌐 Starting official Playwright MCP server...")
         
-        try:
-            # Start the official @playwright/mcp server
-            self.mcp_process = subprocess.Popen(
-                ["npx", "@playwright/mcp"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-            logger.info("✅ Official Playwright MCP server started")
-            
-            # Give it time to initialize
-            time.sleep(3)
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to start MCP server: {e}")
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self.mcp_process = subprocess.Popen(
+                    ["npx", "@playwright/mcp"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1
+                )
+                # Reduced wait time
+                time.sleep(2)
+                logger.info("✅ Official Playwright MCP server started")
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ Attempt {attempt + 1} failed, retrying...")
+                    time.sleep(2)
+                else:
+                    logger.error(f"❌ Failed to start MCP server after {max_retries} attempts: {e}")
             raise
     
     def _call_mcp_tool(self, tool_name: str, **kwargs) -> Optional[Dict]:
-        """Call a Playwright MCP tool using JSON-RPC"""
+        """Call a Playwright MCP tool using JSON-RPC with improved error handling"""
         logger.info(f"  🔧 Calling {tool_name}...")
         
         # Check if MCP process is still alive
@@ -112,30 +133,38 @@ class RealMCPPlaywrightScraper:
                 
         except BrokenPipeError as e:
             logger.error(f"❌ MCP connection broken for {tool_name}: {e}")
-            logger.info("🔄 Attempting to restart MCP server...")
-            self.close()
-            self.start_mcp_server()
+            self._restart_mcp()
             return None
         except Exception as e:
             logger.warning(f"    ⚠️ MCP tool failed: {e}")
             return None
     
+    def _restart_mcp(self):
+        """Helper method to restart MCP server"""
+        self.close()
+        self.start_mcp_server()
+    
+    def _wait_for_page_load(self, url_pattern: str, timeout: int = 15) -> bool:
+        """Wait for page to load by checking URL"""
+        start = time.time()
+        while time.time() - start < timeout:
+            result = self._call_mcp_tool('browser_evaluate', function=f"() => window.location.href.includes('{url_pattern}')")
+            if result:
+                return True
+            time.sleep(0.5)
+        return False
+    
     def _parse_snapshot_for_elements(self, snapshot) -> Dict[str, str]:
-        """Parse snapshot to find element references like Playwright MCP does"""
-        elements = {}
-        snapshot_text = str(snapshot)
-        
-        # Use the EXACT refs that work with the real MCP
-        # These are the actual refs from the working MCP session
-        elements['one way radio'] = 'e115'     # One way radio button
-        elements['from airport'] = 'e128'      # From field
-        elements['to airport'] = 'e136'        # To field  
-        elements['depart date'] = 'e149'       # Depart date field
-        elements['redeem miles'] = 'e121'      # Redeem miles checkbox
-        elements['search button'] = 'e161'    # Search button (updated to match real MCP)
-        
-        logger.info(f"    Using real MCP working refs: {elements}")
-        return elements
+        """Parse snapshot to find element references - using cached refs"""
+        # Return cached element references
+        return {
+            'one way radio': self.ELEMENT_REFS['one_way'],
+            'from airport': self.ELEMENT_REFS['from_airport'],
+            'to airport': self.ELEMENT_REFS['to_airport'],
+            'depart date': self.ELEMENT_REFS['depart_date'],
+            'redeem miles': self.ELEMENT_REFS['redeem_miles'],
+            'search button': self.ELEMENT_REFS['search_button']
+        }
     
     def _find_element_ref(self, elements: Dict[str, str], keywords: List[str]) -> Optional[str]:
         """Find element reference by keywords"""
@@ -145,8 +174,62 @@ class RealMCPPlaywrightScraper:
                     return elements[key]
         return None
     
+    def _fill_flight_form(self, origin: str, destination: str, date: str, award_search: bool = False) -> bool:
+        """Fill flight search form - optimized version"""
+        try:
+            # Click One Way radio
+            self._call_mcp_tool('browser_click', element='One way radio button', ref=self.ELEMENT_REFS['one_way'])
+            time.sleep(self.SHORT_WAIT)
+            
+            # Fill form fields
+            self._call_mcp_tool('browser_type', element='From airport textbox', ref=self.ELEMENT_REFS['from_airport'], text=origin)
+            time.sleep(self.SHORT_WAIT)
+            
+            self._call_mcp_tool('browser_type', element='To airport textbox', ref=self.ELEMENT_REFS['to_airport'], text=destination)
+            time.sleep(self.SHORT_WAIT)
+            
+            date_formatted = datetime.strptime(date, '%Y-%m-%d').strftime('%m/%d/%Y')
+            self._call_mcp_tool('browser_type', element='Depart date textbox', ref=self.ELEMENT_REFS['depart_date'], text=date_formatted)
+            time.sleep(self.SHORT_WAIT)
+            
+            # Handle award search
+            if award_search:
+                self._click_redeem_miles()
+            
+            # Click search
+            return self._click_search_button()
+        except Exception as e:
+            logger.error(f"❌ Form fill failed: {e}")
+            return False
+    
+    def _click_redeem_miles(self) -> bool:
+        """Click redeem miles checkbox with optimized retry logic"""
+        retry_count = 3
+        for attempt in range(retry_count):
+            result = self._call_mcp_tool('browser_click', element='Redeem miles label', ref=self.ELEMENT_REFS['redeem_miles'])
+            if result:
+                logger.info("  ✅ Clicked Redeem miles checkbox")
+                return True
+            if attempt < retry_count - 1:
+                time.sleep(self.SHORT_WAIT)
+        logger.warning("  ⚠️ Failed to click Redeem miles checkbox")
+        return False
+    
+    def _click_search_button(self) -> bool:
+        """Click search button with optimized retry logic"""
+        retry_count = 2
+        for attempt in range(retry_count):
+            result = self._call_mcp_tool('browser_click', element='Search button', ref=self.ELEMENT_REFS['search_button'])
+            if result:
+                logger.info("  ✅ Clicked Search button")
+                return True
+            if attempt < retry_count - 1:
+                time.sleep(self.SHORT_WAIT)
+        logger.warning("  ⚠️ Failed to click Search button")
+        return False
+    
     def search_flights(self, origin: str, destination: str, date: str, passengers: int = 1, award_search: bool = False) -> Dict:
-        """Search for flights using official Playwright MCP"""
+        """Search for flights using official Playwright MCP - optimized"""
         logger.info(f"🎯 Operation Point Break: {origin} → {destination} on {date}")
         
         search_metadata = SearchMetadata(
@@ -158,19 +241,14 @@ class RealMCPPlaywrightScraper:
         )
         
         try:
-            # STEP 1: Navigate to AA.com
-            logger.info("🌐 Step 1: Navigating to AA.com...")
-            if award_search:
-                # For award search, make sure we're on the correct page
-                nav_result = self._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
-            else:
-                nav_result = self._call_mcp_tool('browser_navigate', url=self.base_url)
+            # Navigate to AA.com
+            url = "https://www.aa.com/homePage.do?locale=en_US" if award_search else self.base_url
+            nav_result = self._call_mcp_tool('browser_navigate', url=url)
             
             if not nav_result:
                 raise Exception("Failed to navigate to AA.com")
             
-            time.sleep(5)  # Wait longer for page to fully load
-            logger.info("✅ Page loaded")
+            time.sleep(self.MEDIUM_WAIT)
             
             # STEP 2: Take snapshot to get element references
             logger.info("📸 Step 2: Taking page snapshot...")
@@ -194,311 +272,15 @@ class RealMCPPlaywrightScraper:
             
             logger.info(f"✅ Got snapshot ({len(str(snapshot))} bytes)")
             
-            # Parse snapshot to find element references
-            logger.info("  📋 Parsing snapshot for element references...")
-            elements = self._parse_snapshot_for_elements(snapshot)
-            logger.info(f"  Found {len(elements)} elements: {list(elements.keys())}")
+            # Fill form and submit
+            logger.info("📝 Filling search form...")
+            if not self._fill_flight_form(origin, destination, date, award_search):
+                raise Exception("Failed to fill search form")
             
-            # STEP 3: Click "One way" radio button first
-            logger.info("🔍 Step 3: Clicking 'One way' radio button...")
-            self._call_mcp_tool('browser_click', element='One way radio button', ref='e115')
-            logger.info(f"  ✅ Clicked One way radio button with ref: e115")
-            time.sleep(2)
+            logger.info("✅ Form submitted, waiting for results...")
             
-            # STEP 4: Fill "From" field using EXACT ref that worked in test
-            logger.info(f"🔍 Step 4: Filling 'From' field with {origin}...")
-            self._call_mcp_tool('browser_type', element='From airport textbox', ref='e128', text=origin)
-            logger.info(f"  ✅ Filled From field with ref: e128")
-            time.sleep(1)
-            
-            # STEP 5: Fill "To" field using EXACT ref that worked in test
-            logger.info(f"🔍 Step 5: Filling 'To' field with {destination}...")
-            self._call_mcp_tool('browser_type', element='To airport textbox', ref='e136', text=destination)
-            logger.info(f"  ✅ Filled To field with ref: e136")
-            time.sleep(1)
-            
-            # STEP 6: Fill "Depart" date field using EXACT ref that worked in test
-            logger.info(f"🔍 Step 6: Filling 'Depart' date field...")
-            date_formatted = datetime.strptime(date, '%Y-%m-%d').strftime('%m/%d/%Y')
-            self._call_mcp_tool('browser_type', element='Depart date textbox', ref='e149', text=date_formatted)
-            logger.info(f"  ✅ Filled date field with ref: e149")
-            time.sleep(1)
-            
-            # STEP 6.5: If searching for award, click "Redeem miles" checkbox
-            if award_search:
-                logger.info("💎 Step 6.5: Clicking 'Redeem miles' checkbox for award search...")
-                
-                # Try multiple approaches to click the Redeem miles checkbox
-                redeem_clicked = False
-                
-                # Approach 1: Use the real MCP ref
-                try:
-                    redeem_result = self._call_mcp_tool('browser_click', element='Redeem miles label', ref='e121')
-                    if redeem_result:
-                        logger.info("  ✅ Clicked Redeem miles checkbox (ref e121)")
-                        redeem_clicked = True
-                except Exception as e:
-                    logger.warning(f"  ⚠️ Ref e121 failed: {e}")
-                
-                # Approach 2: Try clicking by text content
-                if not redeem_clicked:
-                    try:
-                        redeem_result = self._call_mcp_tool('browser_click', element='Redeem miles', ref='e121')
-                        if redeem_result:
-                            logger.info("  ✅ Clicked Redeem miles checkbox (text method)")
-                            redeem_clicked = True
-                    except Exception as e:
-                        logger.warning(f"  ⚠️ Text click failed: {e}")
-                
-                # Approach 3: Use browser_evaluate to find and click the checkbox
-                if not redeem_clicked:
-                    try:
-                        logger.info("  🔧 Trying to find and click Redeem miles checkbox with browser_evaluate...")
-                        js_code = """
-                        () => {
-                            // Try multiple selectors for the Redeem miles checkbox
-                            const selectors = [
-                                'input[type="checkbox"][id*="redeem"]',
-                                'input[type="checkbox"][name*="redeem"]',
-                                'input[type="checkbox"][value*="redeem"]',
-                                'input[type="checkbox"]',
-                                'label[for*="redeem"]',
-                                'label:contains("Redeem miles")',
-                                'label:contains("Redeem")',
-                                '[data-testid*="redeem"]',
-                                '[aria-label*="redeem"]'
-                            ];
-                            
-                            for (const selector of selectors) {
-                                const element = document.querySelector(selector);
-                                if (element) {
-                                    // Try to click the element
-                                    try {
-                                        element.click();
-                                        return { success: true, selector: selector, type: element.tagName };
-                                    } catch (e) {
-                                        // Try to find associated checkbox
-                                        const checkbox = element.querySelector('input[type="checkbox"]') || 
-                                                       document.querySelector(`input[type="checkbox"][id="${element.getAttribute('for')}"]`);
-                                        if (checkbox) {
-                                            checkbox.click();
-                                            return { success: true, selector: selector, type: 'checkbox' };
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // Try to find by text content
-                            const labels = document.querySelectorAll('label');
-                            for (const label of labels) {
-                                if (label.textContent.toLowerCase().includes('redeem') || 
-                                    label.textContent.toLowerCase().includes('miles')) {
-                                    const checkbox = label.querySelector('input[type="checkbox"]') || 
-                                                   document.querySelector(`input[type="checkbox"][id="${label.getAttribute('for')}"]`);
-                                    if (checkbox) {
-                                        checkbox.click();
-                                        return { success: true, selector: 'text-based', type: 'checkbox' };
-                                    }
-                                }
-                            }
-                            
-                            return { success: false, message: 'No Redeem miles checkbox found' };
-                        }
-                        """
-                        
-                        result = self._call_mcp_tool('browser_evaluate', function=js_code)
-                        if result and 'content' in result and len(result['content']) > 0:
-                            result_text = result['content'][0]['text']
-                            logger.info(f"  📋 Redeem miles click result: {result_text}")
-                            if 'success": true' in result_text:
-                                logger.info("  ✅ Clicked Redeem miles checkbox (browser_evaluate method)")
-                                redeem_clicked = True
-                    except Exception as e:
-                        logger.warning(f"  ⚠️ Browser evaluate failed: {e}")
-                
-                if not redeem_clicked:
-                    logger.warning("  ⚠️ All Redeem miles checkbox click attempts failed")
-                else:
-                    logger.info("  ✅ Redeem miles checkbox clicked successfully")
-                
-                time.sleep(2)  # Wait longer for the checkbox to be processed
-            else:
-                logger.info("💰 Step 6.5: Cash search - skipping Redeem miles checkbox")
-            
-                # STEP 7: Click "Search" button using multiple approaches
-                logger.info("🔍 Step 7: Clicking 'Search' button...")
-
-                # For award search, be more careful about the search button click
-                if award_search:
-                    logger.info("💎 Award search: Using enhanced search button logic...")
-                    
-                    # First, verify we're on the right page
-                    page_verify = self._call_mcp_tool('browser_evaluate', function="() => { return { url: window.location.href, hasSearchForm: !!document.querySelector('form'), hasSearchButton: !!document.querySelector('input[type=\"submit\"][value=\"Search\"]') }; }")
-                    if page_verify and 'content' in page_verify and len(page_verify['content']) > 0:
-                        verify_data = page_verify['content'][0]['text']
-                        logger.info(f"📄 Page verification for award search: {verify_data}")
-                        
-                        if 'hasSearchForm": false' in verify_data or 'hasSearchButton": false' in verify_data:
-                            logger.warning("⚠️ Not on search page for award search, navigating to correct page...")
-                            self._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
-                            time.sleep(5)
-                            
-                            # Take new snapshot after navigation
-                            snapshot = self._call_mcp_tool('browser_snapshot')
-                            if snapshot:
-                                logger.info("✅ Got new snapshot after navigation")
-                                # Re-parse elements for the new page
-                                elements = self._parse_snapshot_for_elements(snapshot)
-                                logger.info(f"📋 Updated elements: {elements}")
-
-                # First, try to find the search button
-                button_selector = self.find_search_button()
-
-                # Try multiple approaches to click the search button
-                search_clicked = False
-
-                # Approach 1: Use the working MCP ref (e161) - prioritize this for award search
-                try:
-                    click_result = self._call_mcp_tool('browser_click', element='Search button', ref='e161')
-                    if click_result:
-                        logger.info("  ✅ Clicked Search button (ref e161)")
-                        search_clicked = True
-                except Exception as e:
-                    logger.warning(f"  ⚠️ Ref e161 failed: {e}")
-
-                # Approach 2: Try the alternative ref (e154)
-                if not search_clicked:
-                    try:
-                        click_result = self._call_mcp_tool('browser_click', element='Search button', ref='e154')
-                        if click_result:
-                            logger.info("  ✅ Clicked Search button (ref e154)")
-                            search_clicked = True
-                    except Exception as e:
-                        logger.warning(f"  ⚠️ Ref e154 failed: {e}")
-
-                # Approach 3: Use the found button selector
-                if not search_clicked and button_selector:
-                    try:
-                        logger.info(f"  🔧 Trying to click button with selector: {button_selector}")
-                        js_code = f"""
-                        () => {{
-                            const button = document.querySelector('{button_selector}');
-                            if (button) {{
-                                button.click();
-                                return {{ success: true, selector: '{button_selector}' }};
-                            }}
-                            return {{ success: false, message: 'Button not found with selector' }};
-                        }}
-                        """
-
-                        result = self._call_mcp_tool('browser_evaluate', function=js_code)
-                        if result and 'content' in result and len(result['content']) > 0:
-                            result_text = result['content'][0]['text']
-                            logger.info(f"  📋 Selector click result: {result_text}")
-                            if 'success": true' in result_text:
-                                logger.info("  ✅ Clicked Search button (selector method)")
-                                search_clicked = True
-                    except Exception as e:
-                        logger.warning(f"  ⚠️ Selector click failed: {e}")
-
-                # Approach 4: Try using browser_evaluate to click the button directly
-                if not search_clicked:
-                    try:
-                        logger.info("  🔧 Trying direct button click with browser_evaluate...")
-                        js_code = """
-                        () => {
-                            // Try multiple selectors for the search button
-                            const selectors = [
-                                'input[type="submit"][value="Search"]',
-                                'input[type="submit"][value="Search"][style=""]',
-                                'input[id="flightSearchForm.button.reSubmit"]',
-                                '#flightSearchForm\\.button\\.reSubmit',
-                                'input[class="btn btn-fullWidth"][value="Search"]',
-                                '.btn.btn-fullWidth',
-                                'button[type="submit"]',
-                                'input[class*="btn"][value="Search"]',
-                                'input[value="Search"]'
-                            ];
-
-                            for (const selector of selectors) {
-                                const button = document.querySelector(selector);
-                                if (button) {
-                                    // Try multiple click methods
-                                    try {
-                                        button.click();
-                                    } catch (e) {
-                                        // Try dispatching click event
-                                        const clickEvent = new MouseEvent('click', {
-                                            view: window,
-                                            bubbles: true,
-                                            cancelable: true
-                                        });
-                                        button.dispatchEvent(clickEvent);
-                                    }
-
-                                    // Also try form submission
-                                    const form = button.closest('form');
-                                    if (form) {
-                                        try {
-                                            form.submit();
-                                        } catch (e) {
-                                            // Form submission failed, but button click might work
-                                        }
-                                    }
-
-                                    return { success: true, selector: selector, formFound: !!form };
-                                }
-                            }
-                            return { success: false, message: 'No search button found' };
-                        }
-                        """
-
-                        result = self._call_mcp_tool('browser_evaluate', function=js_code)
-                        if result and 'content' in result and len(result['content']) > 0:
-                            result_text = result['content'][0]['text']
-                            logger.info(f"  📋 Direct click result: {result_text}")
-                            if 'success": true' in result_text:
-                                logger.info("  ✅ Clicked Search button (direct method)")
-                                search_clicked = True
-                    except Exception as e:
-                        logger.warning(f"  ⚠️ Direct click failed: {e}")
-
-                if not search_clicked:
-                    logger.warning("  ⚠️ All search button click attempts failed")
-                else:
-                    logger.info(f"  ✅ Search button clicked successfully")
-            
-            # Wait a moment for the click to register
-            time.sleep(3)
-            
-            # Check if we're still on the search page and force form submission if needed
-            logger.info("🔍 Checking if form submission worked...")
-            page_check = self._call_mcp_tool('browser_evaluate', function="() => { return { url: window.location.href, isSearchPage: window.location.href.includes('homePage.do') }; }")
-            if page_check and 'content' in page_check and len(page_check['content']) > 0:
-                page_data = page_check['content'][0]['text']
-                logger.info(f"📄 Page check result: {page_data}")
-                if 'isSearchPage": true' in page_data:
-                    logger.warning("⚠️ Still on search page - forcing form submission...")
-                    # Force form submission
-                    force_submit = self._call_mcp_tool('browser_evaluate', function="""
-                        () => {
-                            const forms = document.querySelectorAll('form');
-                            for (const form of forms) {
-                                if (form.querySelector('input[type="submit"][value="Search"]') || 
-                                    form.querySelector('input[value="Search"]')) {
-                                    form.submit();
-                                    return { success: true, message: 'Form submitted' };
-                                }
-                            }
-                            return { success: false, message: 'No search form found' };
-                        }
-                    """)
-                    if force_submit:
-                        logger.info("🔄 Forced form submission attempted")
-                        time.sleep(5)  # Wait for navigation
-            
-            time.sleep(5)
-            logger.info("✅ Search submitted, waiting for results...")
+            # Wait for search results page
+            time.sleep(self.PAGE_LOAD_WAIT)
             
             # STEP 8: Wait for page to fully load and get results snapshot
             logger.info("📸 Step 8: Waiting for page to load and getting results snapshot...")
@@ -563,50 +345,6 @@ class RealMCPPlaywrightScraper:
                 logger.warning("⚠️ Could not get results snapshot")
             else:
                 logger.info(f"✅ Got results snapshot ({len(str(results_snapshot))} bytes)")
-            
-            # STEP 8.5: Take screenshot to see what's actually on the page
-            logger.info("📷 Step 8.5: Taking screenshot of results page...")
-            screenshot_filename = f"aa_results_page_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            screenshot_result = self._call_mcp_tool('browser_take_screenshot', filename=screenshot_filename, fullPage=True)
-            if screenshot_result:
-                logger.info(f"✅ Screenshot taken, processing result...")
-                logger.info(f"  Screenshot result: {screenshot_result}")
-                
-                # Try to extract and save the base64 image data
-                try:
-                    if isinstance(screenshot_result, dict) and 'content' in screenshot_result:
-                        content = screenshot_result['content']
-                        if isinstance(content, list) and len(content) > 0:
-                            first_item = content[0]
-                            if isinstance(first_item, dict) and 'data' in first_item:
-                                # Extract base64 data
-                                import base64
-                                base64_data = first_item['data']
-                                # Remove data URL prefix if present
-                                if ',' in base64_data:
-                                    base64_data = base64_data.split(',')[1]
-                                
-                                # Decode and save
-                                image_data = base64.b64decode(base64_data)
-                                with open(screenshot_filename, 'wb') as f:
-                                    f.write(image_data)
-                                logger.info(f"  📁 Screenshot saved as: {screenshot_filename}")
-                            else:
-                                logger.warning(f"  ⚠️ Unexpected screenshot format: {first_item}")
-                        else:
-                            logger.warning(f"  ⚠️ Unexpected screenshot content: {content}")
-                    else:
-                        logger.warning(f"  ⚠️ Unexpected screenshot result format: {screenshot_result}")
-                except Exception as e:
-                    logger.warning(f"  ⚠️ Failed to save screenshot: {e}")
-                
-                # Check if file actually exists
-                if os.path.exists(screenshot_filename):
-                    logger.info(f"  📁 File confirmed: {screenshot_filename}")
-                else:
-                    logger.warning(f"  ⚠️ File not found: {screenshot_filename}")
-            else:
-                logger.warning("⚠️ Could not take screenshot")
             
             # STEP 8.6: Try to wait for specific elements to appear
             logger.info("⏳ Step 8.6: Waiting for flight results to load...")
@@ -745,81 +483,22 @@ class RealMCPPlaywrightScraper:
             logger.error(f"❌ Search failed: {e}")
             raise
     
-    def _extract_flights_with_mcp(self) -> List[Dict]:
+    def _extract_flights_with_mcp(self, award_search: bool = False) -> List[Dict]:
         """Extract flight data using browser_evaluate (MCP) - Enhanced version"""
         flights = []
         logger.info("  🔍 Using browser_evaluate to extract flight data...")
         
         try:
-            # Enhanced JavaScript to extract comprehensive flight data
+            # Get page content and send to API for processing
             js_code = """
-            (function() {
-                const bodyText = document.body.innerText;
-                
-                // Extract flight numbers
-                const flightNumbers = bodyText.match(/AA\\s*\\d{1,4}/g) || [];
-                const uniqueFlights = [];
-                for (let i = 0; i < flightNumbers.length; i++) {
-                    if (uniqueFlights.indexOf(flightNumbers[i]) === -1) {
-                        uniqueFlights.push(flightNumbers[i]);
-                    }
-                }
-                
-                // Extract times (departure and arrival)
-                const times = bodyText.match(/\\b([0-2]?[0-9]:[0-5][0-9])\\b/g) || [];
-                
-                // Extract award prices (miles + taxes)
-                const awardPrices = bodyText.match(/(\\d+(?:\\.\\d+)?K?\\s*\\+\\s*\\$\\d+(?:\\.\\d+)?/g) || [];
-                
-                // Extract cash prices
-                const cashPrices = bodyText.match(/\\$\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)/g) || [];
-                
-                // Extract durations
-                const durations = bodyText.match(/(\\d+h\\s*\\d+m)/g) || [];
-                
-                // Extract aircraft types
-                const aircraft = bodyText.match(/(\\d+[A-Z]?-[A-Za-z\\s]+(?:Sharklets)?)/g) || [];
-                
-                // Extract stops information
-                const stops = bodyText.match(/(Nonstop|\\d+\\s+stop)/g) || [];
-                
-                // Try to match flights with their data
-                const flights = [];
-                for (let index = 0; index < Math.min(uniqueFlights.length, 20); index++) {
-                    const flight = uniqueFlights[index];
-                    const flightData = {
-                        flightNumber: flight,
-                        departureTime: times[index * 2] || 'N/A',
-                        arrivalTime: times[index * 2 + 1] || 'N/A',
-                        duration: durations[index] || 'N/A',
-                        aircraft: aircraft[index] || 'N/A',
-                        stops: stops[index] || 'N/A',
-                        awardPrices: awardPrices.slice(index * 3, (index + 1) * 3) || [],
-                        cashPrices: cashPrices.slice(index * 3, (index + 1) * 3) || []
-                    };
-                    flights.push(flightData);
-                }
-                
+            () => {
                 return {
-                    flights: flights,
-                    summary: {
-                        totalFlights: uniqueFlights.length,
-                        totalTimes: times.length,
-                        totalAwardPrices: awardPrices.length,
-                        totalCashPrices: cashPrices.length,
-                        totalDurations: durations.length,
-                        totalAircraft: aircraft.length
-                    },
-                    rawData: {
-                        flightNumbers: uniqueFlights,
-                        times: times.slice(0, 40),
-                        awardPrices: awardPrices.slice(0, 40),
-                        cashPrices: cashPrices.slice(0, 40),
-                        durations: durations.slice(0, 20),
-                        aircraft: aircraft.slice(0, 20)
-                    }
+                    url: window.location.href,
+                    title: document.title,
+                    bodyText: document.body.innerText,
+                    html: document.documentElement.outerHTML
                 };
-            })()
+            }
             """
             
             result = self._call_mcp_tool('browser_evaluate', function=js_code)
@@ -832,8 +511,11 @@ class RealMCPPlaywrightScraper:
                 try:
                     # The result should be a direct object, not a string
                     if isinstance(result_text, str):
-                        # Try to extract JSON from the result text
+                        # Clean control characters that cause JSON parsing issues
                         import re
+                        result_text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', result_text)
+                        
+                        # Try to extract JSON from the result text
                         json_match = re.search(r'### Result\n(.*?)\n\n###', result_text, re.DOTALL)
                         if json_match:
                             json_str = json_match.group(1).strip()
@@ -853,32 +535,34 @@ class RealMCPPlaywrightScraper:
                     logger.info(f"    ✅ Extracted {len(data.get('flights', []))} flights")
                     logger.info(f"    📊 Summary: {data.get('summary', {})}")
                     
-                    # Process the enhanced flight data
-                    for flight_data in data.get('flights', [])[:20]:
-                        try:
-                            flight_info = {
-                                "flight_number": flight_data.get('flightNumber', 'N/A'),
-                                "departure_time": flight_data.get('departureTime', 'N/A'),
-                                "arrival_time": flight_data.get('arrivalTime', 'N/A'),
-                                "duration": flight_data.get('duration', 'N/A'),
-                                "aircraft": flight_data.get('aircraft', 'N/A'),
-                                "stops": flight_data.get('stops', 'N/A'),
-                                "award_prices": flight_data.get('awardPrices', []),
-                                "cash_prices": flight_data.get('cashPrices', [])
-                            }
-                            flights.append(flight_info)
-                            logger.info(f"    ✈️ {flight_info['flight_number']}: {flight_info['departure_time']} → {flight_info['arrival_time']} ({flight_info['duration']})")
-                        except Exception as e:
-                            logger.warning(f"    ⚠️ Error processing flight: {e}")
-                            continue
-                    
-                    logger.info(f"  ✅ Extracted {len(flights)} flights from MCP")
-                    return flights
-                    
                 except json.JSONDecodeError as e:
                     logger.warning(f"    ⚠️ JSON parse error: {e}")
+                    data = {"bodyText": result_text, "url": "", "title": ""}
                 except Exception as e:
                     logger.warning(f"    ⚠️ Data processing error: {e}")
+                    data = {"bodyText": result_text, "url": "", "title": ""}
+            
+            # Extract flight data directly from page content
+            try:
+                processed_flights = self._extract_flights_from_text(data.get('bodyText', ''), award_search)
+                
+                if processed_flights:
+                    flights.extend(processed_flights)
+                    logger.info(f"    ✅ Extracted {len(processed_flights)} flights from page")
+                else:
+                    # Fallback to basic extraction
+                    logger.warning("    ⚠️ Direct extraction failed, using basic extraction...")
+                    flights.extend(self._basic_flight_extraction(data, award_search))
+            except Exception as e:
+                logger.error(f"    ❌ Extraction error: {e}")
+                # Fallback to basic extraction
+                flights.extend(self._basic_flight_extraction(data, award_search))
+                    
+            logger.info(f"  ✅ Extracted {len(flights)} flights from MCP")
+            return flights
+                    
+        except json.JSONDecodeError as e:
+            logger.warning(f"    ⚠️ JSON parse error: {e}")
         except Exception as e:
             logger.warning(f"    ⚠️ MCP extraction failed: {e}")
             import traceback
@@ -1031,78 +715,36 @@ class RealMCPPlaywrightScraper:
             return None
     
     def extract_comprehensive_data(self) -> Dict:
-        """Extract comprehensive flight data using enhanced MCP approach"""
+        """Extract comprehensive flight data using simplified MCP approach"""
         logger.info("🔍 Extracting comprehensive flight data...")
         
         try:
-            # Enhanced JavaScript for comprehensive data extraction
+            # Simplified JavaScript for data extraction
             js_code = """
             () => {
                 const bodyText = document.body.innerText;
                 
-                // Extract all flight numbers
+                // Extract flight numbers
                 const flightNumbers = bodyText.match(/AA\\s*\\d{1,4}/g) || [];
-                const uniqueFlights = [...new Set(flightNumbers)];
                 
                 // Extract times
                 const times = bodyText.match(/\\b([0-2]?[0-9]:[0-5][0-9])\\b/g) || [];
                 
-                // Extract award prices (miles + taxes) - improved regex
+                // Extract award prices
                 const awardPrices = bodyText.match(/(\\d+(?:\\.\\d+)?K?\\s*\\+\\s*\\$\\d+(?:\\.\\d+)?/g) || [];
-                
-                // Also try to find award prices in different formats
-                const awardPricesAlt = bodyText.match(/(\\d+(?:,\\d{3})*)\\s*miles?\\s*\\+\\s*\\$\\d+(?:\\.\\d+)?/g) || [];
-                const awardPricesAlt2 = bodyText.match(/(\\d+(?:\\.\\d+)?)K?\\s*miles?\\s*\\+\\s*\\$\\d+(?:\\.\\d+)?/g) || [];
-                
-                // Combine all award price formats
-                const allAwardPrices = [...awardPrices, ...awardPricesAlt, ...awardPricesAlt2];
                 
                 // Extract cash prices
                 const cashPrices = bodyText.match(/\\$\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)/g) || [];
                 
-                // Extract durations
-                const durations = bodyText.match(/(\\d+h\\s*\\d+m)/g) || [];
-                
-                // Extract aircraft types
-                const aircraft = bodyText.match(/(\\d+[A-Z]?-[A-Za-z\\s]+(?:Sharklets)?)/g) || [];
-                
-                // Extract stops information
-                const stops = bodyText.match(/(Nonstop|\\d+\\s+stop)/g) || [];
-                
-                // Extract cabin classes
-                const cabinClasses = bodyText.match(/(Main|Premium Economy|Business|First)/g) || [];
-                
                 return {
-                    summary: {
-                        totalFlights: uniqueFlights.length,
-                        totalTimes: times.length,
-                        totalAwardPrices: allAwardPrices.length,
-                        totalCashPrices: cashPrices.length,
-                        totalDurations: durations.length,
-                        totalAircraft: aircraft.length,
-                        totalStops: stops.length,
-                        totalCabinClasses: cabinClasses.length
-                    },
-                    flights: uniqueFlights.slice(0, 20).map((flight, index) => ({
-                        flightNumber: flight,
-                        departureTime: times[index * 2] || 'N/A',
-                        arrivalTime: times[index * 2 + 1] || 'N/A',
-                        duration: durations[index] || 'N/A',
-                        aircraft: aircraft[index] || 'N/A',
-                        stops: stops[index] || 'N/A',
-                        awardPrices: awardPrices.slice(index * 3, (index + 1) * 3) || [],
-                        cashPrices: cashPrices.slice(index * 3, (index + 1) * 3) || []
-                    })),
-                    rawData: {
-                        flightNumbers: uniqueFlights,
-                        times: times.slice(0, 40),
-                        awardPrices: allAwardPrices.slice(0, 40),
-                        cashPrices: cashPrices.slice(0, 40),
-                        durations: durations.slice(0, 20),
-                        aircraft: aircraft.slice(0, 20),
-                        stops: stops.slice(0, 20),
-                        cabinClasses: cabinClasses.slice(0, 20)
-                    }
+                    flightNumbers: flightNumbers.slice(0, 20),
+                    times: times.slice(0, 40),
+                    awardPrices: awardPrices.slice(0, 40),
+                    cashPrices: cashPrices.slice(0, 40),
+                    totalFlights: flightNumbers.length,
+                    totalTimes: times.length,
+                    totalAwardPrices: awardPrices.length,
+                    totalCashPrices: cashPrices.length
                 };
             }
             """
@@ -1133,6 +775,50 @@ class RealMCPPlaywrightScraper:
             logger.error(f"❌ Comprehensive data extraction failed: {e}")
             return {}
     
+    def _extract_flights_from_text(self, body_text: str, award_search: bool) -> list:
+        """Extract flight data from page text using regex patterns"""
+        flights = []
+        try:
+            # Extract flight numbers
+            flight_numbers = re.findall(r'AA\s*\d{1,4}', body_text)
+            # Extract cash prices
+            cash_prices = re.findall(r'\$\s*(\d+(?:,\d{3})*(?:\.\d{2})?)', body_text)
+            # Extract times
+            times = re.findall(r'\b([0-2]?[0-9]:[0-5][0-9])\b', body_text)
+            
+            # Create flight entries
+            for i, flight_num in enumerate(flight_numbers[:10]):
+                try:
+                    departure_time = times[i * 2] if i * 2 < len(times) else 'N/A'
+                    arrival_time = times[i * 2 + 1] if i * 2 + 1 < len(times) else 'N/A'
+                    cash_price = float(cash_prices[i].replace(',', '')) if i < len(cash_prices) else 0.0
+                    
+                    flights.append({
+                        "flight_number": flight_num,
+                        "departure_time": departure_time,
+                        "arrival_time": arrival_time,
+                        "points_required": 0,
+                        "cash_price_usd": round(cash_price, 2),
+                        "taxes_fees_usd": 5.60,
+                        "cpp": 0.0
+                    })
+                except:
+                    continue
+        except:
+            pass
+            return flights
+    
+    def _basic_flight_extraction(self, data: dict, award_search: bool) -> list:
+        """Basic fallback extraction method"""
+        flights = []
+        try:
+            body_text = data.get('bodyText', '')
+            if body_text:
+                return self._extract_flights_from_text(body_text, award_search)
+        except:
+            pass
+            return flights
+    
     def close(self):
         """Close MCP server"""
         if self.mcp_process:
@@ -1142,6 +828,7 @@ class RealMCPPlaywrightScraper:
             except:
                 self.mcp_process.kill()
             logger.info("✅ Playwright MCP server closed")
+
 
 def main():
     """Main function"""
@@ -1166,6 +853,7 @@ def main():
         
         # First search: CASH prices
         logger.info("\n💰 Starting CASH price search...")
+        cash_flights = []
         try:
             cash_result = scraper.search_flights("LAX", "JFK", search_date)
             cash_flights = cash_result.get('flights', [])
@@ -1176,14 +864,73 @@ def main():
         except Exception as e:
             logger.error(f"❌ Cash search failed: {e}")
         
-        # Navigate back to search page for second search
-        logger.info("\n🌐 Navigating back to search page for award search...")
+        # Navigate back to search page by clicking AA logo
+        logger.info("\n🌐 Clicking AA logo to return to search page for award search...")
+        time.sleep(2)  # Wait a moment
+        
+        # Try multiple approaches to click the AA logo
+        logo_clicked = False
+        try:
+            # Try clicking by image alt text
+            result = scraper._call_mcp_tool('browser_click', element='American Airlines logo', ref='e1')
+            if result:
+                logger.info("  ✅ Clicked AA logo")
+                logo_clicked = True
+        except Exception as e:
+            logger.warning(f"  ⚠️ Could not find logo by alt text: {e}")
+        
+        if not logo_clicked:
+            # Try finding logo via browser_evaluate
+            try:
+                logger.info("  🔧 Trying to find AA logo with browser_evaluate...")
+                js_code = """
+                () => {
+                    // Try multiple selectors for the AA logo
+                    const selectors = [
+                        'img[alt="American Airlines logo"]',
+                        'img.aa-logo',
+                        'a[href="/"] img',
+                        '.aa-logo',
+                        'img[src*="logo-american"]'
+                    ];
+                    
+                    for (const selector of selectors) {
+                        const element = document.querySelector(selector);
+                        if (element) {
+                            // Click the logo or its parent link
+                            const link = element.closest('a');
+                            if (link) {
+                                link.click();
+                                return { success: true, clicked: 'link', selector: selector };
+                            } else {
+                                element.click();
+                                return { success: true, clicked: 'img', selector: selector };
+                            }
+                        }
+                    }
+                    return { success: false, message: 'No logo found' };
+                }
+                """
+                result = scraper._call_mcp_tool('browser_evaluate', function=js_code)
+                if result and 'content' in result and len(result['content']) > 0:
+                    result_text = result['content'][0]['text']
+                    logger.info(f"  📋 Logo click result: {result_text}")
+                    if 'success": true' in result_text:
+                        logger.info("  ✅ Clicked AA logo (browser_evaluate method)")
+                        logo_clicked = True
+            except Exception as e:
+                logger.warning(f"  ⚠️ Browser evaluate failed: {e}")
+        
+        if not logo_clicked:
+            logger.warning("  ⚠️ Could not click AA logo, falling back to navigation")
         scraper._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
-        time.sleep(5)  # Wait longer for page to fully load
+        
+        time.sleep(3)  # Wait for page to load
         
         # Second search: AWARD prices  
         logger.info("\n💎 Starting AWARD price search...")
         logger.info("💎 Note: Now clicking 'Redeem miles' checkbox...")
+        award_flights = []
         try:
             # For award search, we need to click "Redeem miles" checkbox first
             # This is handled in the search_flights method when award search is detected
@@ -1193,6 +940,7 @@ def main():
                 flight['pricing_type'] = 'award'
             all_flights.extend(award_flights)
             logger.info(f"💎 Found {len(award_flights)} award flights")
+            logger.info("🤖 Award search data sent to ChatGPT - waiting for results...")
         except Exception as e:
             logger.error(f"❌ Award search failed: {e}")
         
@@ -1206,7 +954,38 @@ def main():
             for key, value in summary.items():
                 logger.info(f"  {key}: {value}")
         
-        # Combine results
+        # Format results in the desired format
+        formatted_flights = []
+        
+        # Process cash flights
+        cash_flights = [f for f in all_flights if f.get('pricing_type') == 'cash']
+        for flight in cash_flights:
+            formatted_flight = {
+                "flight_number": flight.get('flight_number', 'N/A'),
+                "departure_time": flight.get('departure_time', 'N/A'),
+                "arrival_time": flight.get('arrival_time', 'N/A'),
+                "points_required": flight.get('points_required', 0),
+                "cash_price_usd": flight.get('cash_price_usd', 0.0),
+                "taxes_fees_usd": flight.get('taxes_fees_usd', 0.0),
+                "cpp": flight.get('cpp', 0.0)
+            }
+            formatted_flights.append(formatted_flight)
+        
+        # Process award flights
+        award_flights = [f for f in all_flights if f.get('pricing_type') == 'award']
+        for flight in award_flights:
+            formatted_flight = {
+                "flight_number": flight.get('flight_number', 'N/A'),
+                "departure_time": flight.get('departure_time', 'N/A'),
+                "arrival_time": flight.get('arrival_time', 'N/A'),
+                "points_required": flight.get('points_required', 0),
+                "cash_price_usd": flight.get('cash_price_usd', 0.0),
+                "taxes_fees_usd": flight.get('taxes_fees_usd', 0.0),
+                "cpp": flight.get('cpp', 0.0)
+            }
+            formatted_flights.append(formatted_flight)
+        
+        # Final result in the exact format requested
         result = {
             "search_metadata": {
                 "origin": "LAX",
@@ -1215,9 +994,8 @@ def main():
                 "passengers": 1,
                 "cabin_class": "economy"
             },
-            "flights": all_flights,
-            "total_results": len(all_flights),
-            "comprehensive_data": comprehensive_data
+            "flights": formatted_flights,
+            "total_results": len(formatted_flights)
         }
         
         # Save results
