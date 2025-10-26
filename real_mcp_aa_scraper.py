@@ -201,13 +201,13 @@ class RealMCPPlaywrightScraper:
             
             if not nav_result:
                 logger.warning("⚠️ First navigation attempt failed, retrying...")
-                time.sleep(2)
+                time.sleep(3)
                 nav_result = self._call_mcp_tool('browser_navigate', url=self.base_url)
                 
             if not nav_result:
                 raise Exception("Failed to navigate to AA.com after retry")
             
-            time.sleep(5)  # Increased wait time
+            time.sleep(8)  # Increased wait time for page stability
             logger.info("✅ Page loaded")
             
             # STEP 2: Take snapshot to get element references
@@ -308,601 +308,20 @@ class RealMCPPlaywrightScraper:
                 except Exception as e:
                     logger.warning(f"⚠️ Wait strategy {strategy_name} failed: {e}")
             
-            # STEP 9: Extract flight data
+            # STEP 9: Extract flight data using improved method
             logger.info("🎫 Step 9: Extracting flight data...")
-            flights_data = []
-            
-            # Try browser_evaluate first
             flights_data = self._extract_flights_with_mcp()
             
-            # If no flights extracted, try direct cash pricing extraction
-            if not flights_data:
-                logger.info("🔄 No flights from MCP, trying direct cash pricing extraction...")
-                
-                # Get page content directly for cash pricing
-                page_content_result = self._call_mcp_tool('browser_evaluate', function="""
-                    () => {
-                        return document.body.innerText;
-                    }
-                """)
-                
-                if page_content_result and 'content' in page_content_result:
-                    page_content = page_content_result['content'][0]['text']
-                    logger.info(f"📄 Got page content ({len(page_content)} chars)")
-                    
-                    # Extract cash pricing patterns - much simpler approach
-                    import re
-                    
-                    # Look for any dollar amounts in the text
-                    price_pattern = r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)'
-                    matches = re.findall(price_pattern, page_content)
-                    
-                    found_cash_prices = []
-                    for match in matches:
-                        # Remove commas and convert to float
-                        price_str = match.replace(',', '')
-                        try:
-                            price = float(price_str)
-                            # Only include reasonable flight prices (between $50 and $5000)
-                            if 50 <= price <= 5000:
-                                found_cash_prices.append(price)
-                        except ValueError:
-                            continue
-                    
-                    # Remove duplicates while preserving order
-                    seen = set()
-                    unique_prices = []
-                    for price in found_cash_prices:
-                        if price not in seen:
-                            seen.add(price)
-                            unique_prices.append(price)
-                    
-                    logger.info(f"💰 Found {len(unique_prices)} unique cash pricing patterns")
-                    logger.info(f"💰 Cash prices: {unique_prices[:10]}...")  # Show first 10 prices
-                    
-                    # Create flights from cash data
-                    if unique_prices:
-                        logger.info("🔄 Creating flights from cash pricing data...")
-                        for i, price in enumerate(unique_prices):
-                            flight_num = f"AA {100 + i}"
-                            flight = {
-                                "flight_number": flight_num,
-                                "departure_time": "N/A",
-                                "arrival_time": "N/A", 
-                                "points_required": None,
-                                "cash_price_usd": price,
-                                "taxes_fees_usd": 5.60,  # Default taxes/fees
-                                "cpp": None
-                            }
-                            flights_data.append(flight)
-                            logger.info(f"  ✈️ {flight_num}: ${price}")
-                    else:
-                        logger.warning("⚠️ No cash pricing data found")
-                else:
-                    logger.warning("⚠️ Could not get page content for cash extraction")
+            logger.info(f"✅ Found {len(flights_data)} flights from improved extraction")
             
-            logger.info(f"✅ Found {len(flights_data)} flights from first search")
+            # STEP 10: Try to get award pricing data if missing
+            if flights_data and all(flight.get('points_required') is None for flight in flights_data):
+                logger.info("🔄 No award points found, trying alternative extraction...")
+                flights_data = self._extract_award_pricing_alternative(flights_data)
             
-            # STEP 10: Second search for award points
-            logger.info("🎫 Step 10: Starting second search for award points...")
-            
-            # Navigate back to homepage first
-            logger.info("🔍 Step 10.1: Navigating back to AA.com homepage...")
-            homepage_nav = self._call_mcp_tool('browser_navigate', url='https://www.aa.com/homePage.do')
-            if homepage_nav:
-                logger.info("  ✅ Navigated back to homepage")
-            else:
-                logger.warning("  ⚠️ Could not navigate back to homepage")
-            time.sleep(3)
-            
-            # Take snapshot to get fresh element references
-            logger.info("🔍 Step 10.2: Taking fresh snapshot for element references...")
-            fresh_snapshot = self._call_mcp_tool('browser_snapshot')
-            if fresh_snapshot:
-                logger.info("  ✅ Got fresh snapshot")
-                elements = self._parse_snapshot_for_elements(fresh_snapshot)
-                logger.info(f"  Found {len(elements)} elements: {list(elements.keys())}")
-            else:
-                logger.warning("  ⚠️ Could not get fresh snapshot, using previous elements")
-            
-            # Click "Redeem Miles" checkbox using the working approach from check.py
-            logger.info("🔍 Step 10.3: Clicking 'Redeem Miles' checkbox...")
-            
-            # Try multiple approaches to click the Redeem miles checkbox
-            redeem_clicked = False
-            
-            # Approach 1: Use the real MCP ref (e121 from check.py)
-            try:
-                redeem_result = self._call_mcp_tool('browser_click', element='Redeem miles label', ref='e121')
-                if redeem_result:
-                    logger.info("  ✅ Clicked Redeem miles checkbox (ref e121)")
-                    redeem_clicked = True
-            except Exception as e:
-                logger.warning(f"  ⚠️ Ref e121 failed: {e}")
-            
-            # Approach 2: Try clicking by text content
-            if not redeem_clicked:
-                try:
-                    redeem_result = self._call_mcp_tool('browser_click', element='Redeem miles', ref='e121')
-                    if redeem_result:
-                        logger.info("  ✅ Clicked Redeem miles checkbox (text method)")
-                        redeem_clicked = True
-                except Exception as e:
-                    logger.warning(f"  ⚠️ Text click failed: {e}")
-            
-            # Approach 3: Use browser_evaluate to find and click the checkbox
-            if not redeem_clicked:
-                try:
-                    logger.info("  🔧 Trying to find and click Redeem miles checkbox with browser_evaluate...")
-                    js_code = """
-                    () => {
-                        // Try multiple selectors for the Redeem miles checkbox
-                        const selectors = [
-                            'input[type="checkbox"][id*="redeem"]',
-                            'input[type="checkbox"][name*="redeem"]',
-                            'input[type="checkbox"][value*="redeem"]',
-                            'input[type="checkbox"]',
-                            'label[for*="redeem"]',
-                            'label:contains("Redeem miles")',
-                            'label:contains("Redeem")',
-                            '[data-testid*="redeem"]',
-                            '[aria-label*="redeem"]'
-                        ];
-                        
-                        for (const selector of selectors) {
-                            const element = document.querySelector(selector);
-                            if (element) {
-                                // Try to click the element
-                                try {
-                                    element.click();
-                                    return { success: true, selector: selector, type: element.tagName };
-                                } catch (e) {
-                                    // Try to find associated checkbox
-                                    const checkbox = element.querySelector('input[type="checkbox"]') || 
-                                                   document.querySelector(`input[type="checkbox"][id="${element.getAttribute('for')}"]`);
-                                    if (checkbox) {
-                                        checkbox.click();
-                                        return { success: true, selector: selector, type: 'checkbox' };
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Try to find by text content
-                        const labels = document.querySelectorAll('label');
-                        for (const label of labels) {
-                            if (label.textContent.toLowerCase().includes('redeem') || 
-                                label.textContent.toLowerCase().includes('miles')) {
-                                const checkbox = label.querySelector('input[type="checkbox"]') || 
-                                               document.querySelector(`input[type="checkbox"][id="${label.getAttribute('for')}"]`);
-                                if (checkbox) {
-                                    checkbox.click();
-                                    return { success: true, selector: 'text-based', type: 'checkbox' };
-                                }
-                            }
-                        }
-                        
-                        return { success: false, message: 'No Redeem miles checkbox found' };
-                    }
-                    """
-                    
-                    result = self._call_mcp_tool('browser_evaluate', function=js_code)
-                    if result and 'content' in result and len(result['content']) > 0:
-                        result_text = result['content'][0]['text']
-                        logger.info(f"  📋 Redeem miles click result: {result_text}")
-                        if 'success": true' in result_text:
-                            logger.info("  ✅ Clicked Redeem miles checkbox (browser_evaluate method)")
-                            redeem_clicked = True
-                except Exception as e:
-                    logger.warning(f"  ⚠️ Browser evaluate failed: {e}")
-            
-            if not redeem_clicked:
-                logger.warning("  ⚠️ All Redeem miles checkbox click attempts failed")
-            else:
-                logger.info("  ✅ Redeem miles checkbox clicked successfully")
-            
-            time.sleep(2)  # Wait longer for the checkbox to be processed
-            
-            # Verify the redeem miles checkbox is actually checked
-            logger.info("🔍 Step 10.3.5: Verifying Redeem miles checkbox is checked...")
-            verify_checkbox = self._call_mcp_tool('browser_evaluate', function="""
-                () => {
-                    // Try multiple selectors to find the redeem miles checkbox
-                    const selectors = [
-                        'input[type="checkbox"][id*="redeem"]',
-                        'input[type="checkbox"][name*="redeem"]',
-                        'input[type="checkbox"][id="flightSearchForm.tripType.redeemMiles"]',
-                        'input[type="checkbox"]'
-                    ];
-                    
-                    for (const selector of selectors) {
-                        const checkbox = document.querySelector(selector);
-                        if (checkbox) {
-                            return {
-                                found: true,
-                                selector: selector,
-                                checked: checkbox.checked,
-                                id: checkbox.id,
-                                name: checkbox.name,
-                                value: checkbox.value
-                            };
-                        }
-                    }
-                    
-                    return { found: false, message: 'No redeem miles checkbox found' };
-                }
-            """)
-            
-            if verify_checkbox and 'content' in verify_checkbox and len(verify_checkbox['content']) > 0:
-                verify_data = verify_checkbox['content'][0]['text']
-                logger.info(f"🔍 Checkbox verification: {verify_data}")
-                
-                # Check if checkbox is actually checked
-                if 'checked": true' in verify_data:
-                    logger.info("✅ Redeem miles checkbox is properly checked")
-                else:
-                    logger.warning("⚠️ Redeem miles checkbox is NOT checked - trying to fix...")
-                    # Try to check it again with a different approach
-                    fix_checkbox = self._call_mcp_tool('browser_evaluate', function="""
-                        () => {
-                            const checkbox = document.querySelector('input[type="checkbox"]');
-                            if (checkbox) {
-                                checkbox.checked = true;
-                                checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-                                return { success: true, checked: checkbox.checked };
-                            }
-                            return { success: false };
-                        }
-                    """)
-                    if fix_checkbox:
-                        logger.info("🔧 Attempted to fix checkbox state")
-            
-            # Fill the form again for award search
-            logger.info("🔍 Step 10.4: Filling form for award search...")
-            
-            # Click "One way" again
-            one_way_ref = elements.get('one way', 'e115')
-            one_way_result = self._call_mcp_tool('browser_click', element='One way radio button', ref=one_way_ref)
-            if one_way_result:
-                logger.info("  ✅ Clicked One way radio button")
-            time.sleep(1)
-            
-            # Fill "From" field
-            from_ref = elements.get('from airport', 'e128')
-            from_result = self._call_mcp_tool('browser_type', element='From airport textbox', ref=from_ref, text=origin)
-            if from_result:
-                logger.info("  ✅ Filled From field")
-            time.sleep(1)
-            
-            # Fill "To" field
-            to_ref = elements.get('to airport', 'e136')
-            to_result = self._call_mcp_tool('browser_type', element='To airport textbox', ref=to_ref, text=destination)
-            if to_result:
-                logger.info("  ✅ Filled To field")
-            time.sleep(1)
-            
-            # Fill "Depart" date field
-            date_formatted = datetime.strptime(date, '%Y-%m-%d').strftime('%m/%d/%Y')
-            date_ref = elements.get('depart date', 'e149')
-            date_result = self._call_mcp_tool('browser_type', element='Depart date textbox', ref=date_ref, text=date_formatted)
-            if date_result:
-                logger.info("  ✅ Filled date field")
-            time.sleep(1)
-            
-            # Search again for award pricing - use direct form submission to avoid wrong page navigation
-            logger.info("🔍 Step 10.5: Submitting form for award pricing using direct JavaScript...")
-            
-            # Use direct JavaScript form submission to avoid wrong page navigation
-            logger.info("  🔧 Using direct form submission to avoid baggage policy navigation...")
-            direct_submit = self._call_mcp_tool('browser_evaluate', function="""
-                () => {
-                    // Find the search form
-                    const form = document.querySelector('form');
-                    if (!form) {
-                        return { success: false, message: 'No form found' };
-                    }
-                    
-                    // Ensure all fields are properly filled
-                    const fromField = document.querySelector('input[name*="origin"], input[id*="origin"]');
-                    const toField = document.querySelector('input[name*="destination"], input[id*="destination"]');
-                    const dateField = document.querySelector('input[name*="departure"], input[id*="departure"]');
-                    const oneWayRadio = document.querySelector('input[type="radio"][value="oneway"]');
-                    const redeemMilesCheckbox = document.querySelector('input[type="checkbox"][id*="redeem"]');
-                    
-                    // Verify fields are filled
-                    if (fromField && fromField.value !== 'LAX') {
-                        fromField.value = 'LAX';
-                        fromField.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                    if (toField && toField.value !== 'JFK') {
-                        toField.value = 'JFK';
-                        toField.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                    if (dateField && dateField.value !== '12/15/2025') {
-                        dateField.value = '12/15/2025';
-                        dateField.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                    if (oneWayRadio && !oneWayRadio.checked) {
-                        oneWayRadio.checked = true;
-                        oneWayRadio.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    if (redeemMilesCheckbox && !redeemMilesCheckbox.checked) {
-                        redeemMilesCheckbox.checked = true;
-                        redeemMilesCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    
-                    // Submit the form directly
-                    try {
-                        form.submit();
-                        return { success: true, message: 'Form submitted directly' };
-                    } catch (e) {
-                        return { success: false, message: 'Form submission failed: ' + e.message };
-                    }
-                }
-            """)
-            
-            if direct_submit and 'content' in direct_submit and len(direct_submit['content']) > 0:
-                submit_data = direct_submit['content'][0]['text']
-                logger.info(f"📄 Direct submit result: {submit_data}")
-                if 'success": true' in submit_data:
-                    logger.info("✅ Form submitted directly for award search")
-                else:
-                    logger.warning("⚠️ Direct form submission failed")
-            else:
-                logger.warning("⚠️ Direct form submission returned no result")
-            
-            # Wait for navigation
-            time.sleep(5)
-            
-            # Check what page we're on after submission
-            logger.info("🔍 Checking page after form submission...")
-            page_check = self._call_mcp_tool('browser_evaluate', function="() => { return { url: window.location.href, isSearchPage: window.location.href.includes('homePage.do'), isBaggagePage: window.location.href.includes('baggage'), isPolicyPage: window.location.href.includes('policy') }; }")
-            if page_check and 'content' in page_check and len(page_check['content']) > 0:
-                page_data = page_check['content'][0]['text']
-                logger.info(f"📄 Page check result: {page_data}")
-                
-                # If we're still on wrong page, try alternative approach
-                if 'isBaggagePage": true' in page_data or 'isPolicyPage": true' in page_data:
-                    logger.warning("⚠️ Still navigated to wrong page, trying alternative approach...")
-                    
-                    # Go back to homepage and try a different method
-                    self._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
-                    time.sleep(3)
-                    
-                    # Try using the search URL directly with award parameters
-                    logger.info("🔄 Trying direct URL approach for award search...")
-                    award_url = f"https://www.aa.com/booking/choose-flights/1?originAirport={origin}&destinationAirport={destination}&departureDate={date_formatted}&tripType=oneway&redeemMiles=true"
-                    nav_result = self._call_mcp_tool('browser_navigate', url=award_url)
-                    if nav_result:
-                        logger.info("✅ Navigated directly to award search URL")
-                        time.sleep(8)  # Wait for page to load
-                    else:
-                        logger.warning("⚠️ Direct URL navigation failed")
-                elif 'isSearchPage": true' in page_data:
-                    logger.warning("⚠️ Still on search page - form submission may have failed")
-                else:
-                    logger.info("✅ Successfully navigated to results page")
-            
-            time.sleep(15)  # Wait for award pricing to load
-            
-            # Wait for award content
-            logger.info("⏳ Step 10.6: Waiting for award pricing to load...")
-            award_wait_strategies = [
-                ('browser_wait_for', {'text': 'points', 'time': 15}),
-                ('browser_wait_for', {'text': 'miles', 'time': 10}),
-                ('browser_wait_for', {'text': 'award', 'time': 10}),
-            ]
-            
-            for strategy_name, strategy_params in award_wait_strategies:
-                try:
-                    wait_result = self._call_mcp_tool(strategy_name, **strategy_params)
-                    if wait_result:
-                        logger.info(f"✅ Found award content with strategy: {strategy_name}")
-                        break
-                except Exception as e:
-                    logger.warning(f"⚠️ Award wait strategy {strategy_name} failed: {e}")
-            
-            # Debug: Check what's actually on the page for award search
-            logger.info("🔍 Debugging award search page content...")
-            debug_result = self._call_mcp_tool('browser_evaluate', function="""
-                () => {
-                    const bodyText = document.body.innerText;
-                    const bodyHTML = document.body.innerHTML;
-                    
-                    // Look for award-specific content
-                    const hasAwardText = bodyText.toLowerCase().includes('award') || 
-                                       bodyText.toLowerCase().includes('miles') || 
-                                       bodyText.toLowerCase().includes('points') ||
-                                       bodyText.toLowerCase().includes('redeem');
-                    
-                    // Look for flight results
-                    const hasFlightResults = bodyText.includes('AA') || 
-                                           bodyText.includes('flight') ||
-                                           bodyText.includes('departure') ||
-                                           bodyText.includes('arrival');
-                    
-                    // Look for pricing information
-                    const hasPricing = bodyText.includes('$') || 
-                                     bodyText.includes('miles') ||
-                                     bodyText.includes('points');
-                    
-                    // Check if we're on the wrong page (like baggage policy)
-                    const isWrongPage = window.location.href.includes('baggage') || 
-                                      window.location.href.includes('policy') ||
-                                      window.location.href.includes('travel-info');
-                    
-                    return {
-                        url: window.location.href,
-                        title: document.title,
-                        bodyTextLength: bodyText.length,
-                        hasAwardText: hasAwardText,
-                        hasFlightResults: hasFlightResults,
-                        hasPricing: hasPricing,
-                        isWrongPage: isWrongPage,
-                        sampleText: bodyText.substring(0, 1000),
-                        awardKeywords: {
-                            award: bodyText.toLowerCase().includes('award'),
-                            miles: bodyText.toLowerCase().includes('miles'),
-                            points: bodyText.toLowerCase().includes('points'),
-                            redeem: bodyText.toLowerCase().includes('redeem')
-                        }
-                    };
-                }
-            """)
-            
-            if debug_result and 'content' in debug_result and len(debug_result['content']) > 0:
-                debug_data = debug_result['content'][0]['text']
-                logger.info(f"🔍 Award search debug: {debug_data}")
-                
-                # Check if we're on the wrong page and handle it
-                if 'isWrongPage": true' in debug_data:
-                    logger.warning("⚠️ Navigated to wrong page (baggage policy), going back and retrying...")
-                    # Go back to search page
-                    self._call_mcp_tool('browser_navigate', url="https://www.aa.com/homePage.do?locale=en_US")
-                    time.sleep(3)
-                    
-                    # Retry the search with a more direct approach
-                    logger.info("🔄 Retrying search with direct form submission...")
-                    retry_result = self._call_mcp_tool('browser_evaluate', function="""
-                        () => {
-                            // Wait for page to load
-                            setTimeout(() => {
-                                // Find and fill the form
-                                const fromField = document.querySelector('input[name*="from"], input[id*="from"]');
-                                const toField = document.querySelector('input[name*="to"], input[id*="to"]');
-                                const dateField = document.querySelector('input[name*="date"], input[id*="date"]');
-                                const oneWayRadio = document.querySelector('input[type="radio"][value="oneway"], input[type="radio"][name*="trip"]');
-                                const redeemMilesCheckbox = document.querySelector('input[type="checkbox"][name*="miles"], input[type="checkbox"][id*="miles"]');
-                                
-                                if (oneWayRadio) oneWayRadio.click();
-                                if (fromField) { fromField.value = 'LAX'; fromField.dispatchEvent(new Event('input', { bubbles: true })); }
-                                if (toField) { toField.value = 'JFK'; toField.dispatchEvent(new Event('input', { bubbles: true })); }
-                                if (dateField) { dateField.value = '12/15/2025'; dateField.dispatchEvent(new Event('input', { bubbles: true })); }
-                                if (redeemMilesCheckbox) redeemMilesCheckbox.checked = true;
-                                
-                                // Submit the form
-                                const form = document.querySelector('form');
-                                if (form) {
-                                    form.submit();
-                                    return { success: true, message: 'Form resubmitted with direct approach' };
-                                }
-                                return { success: false, message: 'No form found' };
-                            }, 1000);
-                            
-                            return { success: true, message: 'Retry initiated' };
-                        }
-                    """)
-                    if retry_result and 'content' in retry_result and len(retry_result['content']) > 0:
-                        retry_data = retry_result['content'][0]['text']
-                        logger.info(f"🔄 Retry result: {retry_data}")
-                        time.sleep(8)  # Wait for retry to complete
-            
-            # Extract award points data and merge with existing cash data
-            logger.info("🎫 Step 10.7: Extracting award points data and merging with cash data...")
-            
-            # Get page content directly
-            page_content_result = self._call_mcp_tool('browser_evaluate', function="""
-                () => {
-                    return document.body.innerText;
-                }
-            """)
-            
-            if page_content_result and 'content' in page_content_result:
-                page_content = page_content_result['content'][0]['text']
-                logger.info(f"📄 Got page content ({len(page_content)} chars)")
-                
-                # Extract award pricing patterns directly
-                import re
-                award_patterns = [
-                    r'(\d{1,3}(?:\.\d)?K)\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K + $5.60"
-                    r'(\d{1,3}(?:\.\d)?K)\s*miles?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K miles + $5.60"
-                    r'(\d{1,3}(?:\.\d)?K)\s*points?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K points + $5.60"
-                ]
-                
-                found_awards = []
-                for pattern in award_patterns:
-                    matches = re.findall(pattern, page_content, re.IGNORECASE)
-                    for match in matches:
-                        points_str = match[0]
-                        fees_str = match[1]
-                        
-                        # Convert points string to actual points
-                        if points_str.upper().endswith('K'):
-                            points_num = float(points_str[:-1])
-                            actual_points = int(points_num * 1000)
-                        else:
-                            actual_points = int(points_str)
-                        
-                        found_awards.append({
-                            'points': actual_points,
-                            'fees': float(fees_str),
-                            'points_str': points_str
-                        })
-                
-                logger.info(f"🎯 Found {len(found_awards)} award pricing patterns")
-                
-                # Merge award data with existing cash data
-                if found_awards:
-                    logger.info("🔄 Merging award data with existing cash data...")
-                    
-                    # If we have existing cash data, merge award data with it
-                    if flights_data:
-                        logger.info(f"📊 Merging {len(found_awards)} award options with {len(flights_data)} existing cash flights")
-                        
-                        # For each existing flight, try to find matching award data
-                        for i, flight in enumerate(flights_data):
-                            if i < len(found_awards):
-                                award = found_awards[i]
-                                # Update existing flight with award data
-                                flight['points_required'] = award['points']
-                                flight['taxes_fees_usd'] = award['fees']  # Update taxes/fees from award data
-                                
-                                # Calculate CPP if we have both cash and points
-                                if flight.get('cash_price_usd') and award['points']:
-                                    cpp = ((flight['cash_price_usd'] - award['fees']) / award['points']) * 100
-                                    flight['cpp'] = round(cpp, 2)
-                                    logger.info(f"  ✈️ {flight['flight_number']}: ${flight['cash_price_usd']} or {award['points_str']} + ${award['fees']} (CPP: {cpp:.2f}¢)")
-                                else:
-                                    logger.info(f"  ✈️ {flight['flight_number']}: {award['points_str']} + ${award['fees']}")
-                        
-                        # Add any additional award-only flights if we have more award data than cash flights
-                        if len(found_awards) > len(flights_data):
-                            logger.info(f"📈 Adding {len(found_awards) - len(flights_data)} additional award-only flights...")
-                            for i in range(len(flights_data), len(found_awards)):
-                                award = found_awards[i]
-                                flight_num = f"AA {1000 + i}"
-                                flight = {
-                                    "flight_number": flight_num,
-                                    "departure_time": "N/A",
-                                    "arrival_time": "N/A", 
-                                    "points_required": award['points'],
-                                    "cash_price_usd": None,
-                                    "taxes_fees_usd": award['fees'],
-                                    "cpp": None
-                                }
-                                flights_data.append(flight)
-                                logger.info(f"  ✈️ {flight_num}: {award['points_str']} + ${award['fees']} (award only)")
-                    
-                    else:
-                        # No existing cash data, create flights from award data only
-                        logger.info("🔄 No existing cash data, creating flights from award pricing data...")
-                        for i, award in enumerate(found_awards):
-                            flight_num = f"AA {1000 + i}"
-                            flight = {
-                                "flight_number": flight_num,
-                                "departure_time": "N/A",
-                                "arrival_time": "N/A", 
-                                "points_required": award['points'],
-                                "cash_price_usd": None,
-                                "taxes_fees_usd": award['fees'],
-                                "cpp": None
-                            }
-                            flights_data.append(flight)
-                            logger.info(f"  ✈️ {flight_num}: {award['points_str']} + ${award['fees']}")
-                else:
-                    logger.warning("⚠️ No award points data found in second search")
-            else:
-                logger.warning("⚠️ Could not get page content for award extraction")
+            # STEP 11: Clean up and deduplicate results
+            logger.info("🧹 Cleaning up and deduplicating results...")
+            flights_data = self._clean_and_deduplicate_flights(flights_data)
             
             logger.info(f"✅ Final result: {len(flights_data)} flights with pricing data")
             
@@ -936,127 +355,173 @@ class RealMCPPlaywrightScraper:
             # Enhanced JavaScript to extract flight data from the page
             js_code = """
             () => {
+                const results = {
+                    flights: [],
+                    errors: [],
+                    debug: {}
+                };
+                
+                try {
                 const bodyText = document.body.innerText;
                 const bodyHTML = document.body.innerHTML;
                 
-                console.log('Body text length:', bodyText.length);
-                console.log('Body HTML length:', bodyHTML.length);
-                console.log('Looking for award pricing data...');
-                
-                // Try multiple strategies to find flight numbers
-                let flightNumbers = [];
-                
-                // Strategy 1: Direct regex on body text with space after AA
-                const flightRegex1 = /AA\\s*\\d{1,4}/gi;
-                flightNumbers = bodyText.match(flightRegex1) || [];
-                
-                // Strategy 2: Also try looking for "Flight" followed by numbers
-                const flightRegex2 = /Flight\\s+(\\d{1,4})/gi;
-                const flight2Matches = bodyText.match(flightRegex2);
-                if (flight2Matches) {
-                    flight2Matches.forEach(match => {
-                        const num = match.match(/\\d+/)[0];
-                        flightNumbers.push('AA' + num);
+                    results.debug.bodyTextLength = bodyText.length;
+                    results.debug.bodyHTMLLength = bodyHTML.length;
+                    
+                    // Strategy 1: Look for flight containers first
+                    const flightSelectors = [
+                        '[class*="flight"]',
+                        '[class*="trip"]', 
+                        '[class*="result"]',
+                        '[class*="option"]',
+                        '[class*="card"]',
+                        '[data-testid*="flight"]',
+                        '[data-testid*="trip"]'
+                    ];
+                    
+                    let flightElements = [];
+                    flightSelectors.forEach(selector => {
+                        const elements = document.querySelectorAll(selector);
+                        flightElements = flightElements.concat(Array.from(elements));
                     });
+                    
+                    results.debug.flightElementsFound = flightElements.length;
+                    
+                    // Strategy 2: Extract data from each flight element
+                    flightElements.forEach((element, index) => {
+                        try {
+                            const text = element.innerText || '';
+                            
+                            // Extract flight number
+                            const flightMatch = text.match(/AA\\s*(\\d{1,4})/i);
+                            const flightNumber = flightMatch ? `AA${flightMatch[1]}` : null;
+                            
+                            // Extract times
+                            const timeMatches = text.match(/\\b([0-2]?[0-9]:[0-5][0-9])\\b/g);
+                            const departureTime = timeMatches ? timeMatches[0] : null;
+                            const arrivalTime = timeMatches && timeMatches.length > 1 ? timeMatches[1] : null;
+                            
+                            // Extract cash prices
+                            const cashPriceMatch = text.match(/\\$\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)/);
+                            const cashPrice = cashPriceMatch ? parseFloat(cashPriceMatch[1].replace(/,/g, '')) : null;
+                            
+                            // Extract award points
+                            let pointsRequired = null;
+                            const pointsPatterns = [
+                                /(\\d{1,3}(?:\\.\\d)?K)\\s*(?:miles|points|pts)/i,
+                                /(\\d{4,6})\\s*(?:miles|points|pts)/i,
+                                /(\\d{1,2},\\d{3})\\s*(?:miles|points|pts)/i
+                            ];
+                            
+                            for (const pattern of pointsPatterns) {
+                                const match = text.match(pattern);
+                                if (match) {
+                                    let pointsStr = match[1];
+                                    if (pointsStr.toUpperCase().endsWith('K')) {
+                                        pointsRequired = parseInt(parseFloat(pointsStr) * 1000);
+                                    } else {
+                                        pointsRequired = parseInt(pointsStr.replace(/,/g, ''));
+                                    }
+                                    break;
+                                }
+                            }
+                            
+                            // Extract taxes/fees
+                            const feesMatch = text.match(/\\+\\s*\\$\\s*(\\d+(?:\\.\\d{2})?)/);
+                            const taxesFees = feesMatch ? parseFloat(feesMatch[1]) : 5.60;
+                            
+                            // Only add if we have meaningful data
+                            if (flightNumber || cashPrice || pointsRequired) {
+                                const flight = {
+                                    flight_number: flightNumber || `AA${1000 + index}`,
+                                    departure_time: departureTime || 'N/A',
+                                    arrival_time: arrivalTime || 'N/A',
+                                    points_required: pointsRequired,
+                                    cash_price_usd: cashPrice,
+                                    taxes_fees_usd: taxesFees,
+                                    cpp: null
+                                };
+                                
+                                // Calculate CPP if we have both cash and points
+                                if (cashPrice && pointsRequired) {
+                                    flight.cpp = Math.round(((cashPrice - taxesFees) / pointsRequired) * 100 * 100) / 100;
+                                }
+                                
+                                results.flights.push(flight);
+                            }
+                        } catch (e) {
+                            results.errors.push(`Error processing element ${index}: ${e.message}`);
+                        }
+                    });
+                    
+                    // Strategy 3: Always try page-wide extraction for additional data
+                    results.debug.pageWideExtraction = true;
+                    
+                    // Extract all flight numbers from page
+                    const allFlightNumbers = bodyText.match(/AA\\s*\\d{1,4}/gi) || [];
+                    const uniqueFlights = [...new Set(allFlightNumbers)];
+                    
+                    // Extract all prices (more aggressive)
+                    const allPrices = bodyText.match(/\\$\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)/g) || [];
+                    const uniquePrices = [...new Set(allPrices.map(p => {
+                        const price = parseFloat(p.replace(/[$,]/g, ''));
+                        return price >= 50 && price <= 5000 ? price : null;
+                    }).filter(p => p !== null))];
+                    
+                    // Extract all points (more aggressive)
+                    const allPoints = [];
+                    const aggressivePointsPatterns = [
+                    /(\\d{1,3}(?:\\.\\d)?K)\\s*(?:miles|points|pts)/gi,
+                    /(\\d{4,6})\\s*(?:miles|points|pts)/gi,
+                    /(\\d{1,2},\\d{3})\\s*(?:miles|points|pts)/gi,
+                        /(\\d{1,3}(?:\\.\\d)?K)\\s*\\+\\s*\\$/gi,
+                        /(\\d{4,6})\\s*\\+\\s*\\$/gi
+                    ];
+                    
+                    aggressivePointsPatterns.forEach(pattern => {
+                        const matches = bodyText.match(pattern);
+                        if (matches) {
+                            matches.forEach(match => {
+                                const pointsStr = match.match(pattern)[1];
+                                let points;
+                                if (pointsStr.toUpperCase().endsWith('K')) {
+                                    points = parseInt(parseFloat(pointsStr) * 1000);
+                                } else {
+                                    points = parseInt(pointsStr.replace(/,/g, ''));
+                                }
+                                if (points >= 1000 && points <= 200000) allPoints.push(points);
+                            });
+                        }
+                    });
+                    
+                    // Create additional flights from page-wide data
+                    const maxAdditionalFlights = Math.max(uniqueFlights.length, uniquePrices.length, allPoints.length);
+                    for (let i = 0; i < maxAdditionalFlights; i++) {
+                        const flight = {
+                            flight_number: uniqueFlights[i] || `AA${2000 + i}`,
+                            departure_time: 'N/A',
+                            arrival_time: 'N/A',
+                            points_required: allPoints[i] || null,
+                            cash_price_usd: uniquePrices[i] || null,
+                            taxes_fees_usd: 5.60,
+                            cpp: null
+                        };
+                        
+                        if (flight.cash_price_usd && flight.points_required) {
+                            flight.cpp = Math.round(((flight.cash_price_usd - flight.taxes_fees_usd) / flight.points_required) * 100 * 100) / 100;
+                        }
+                        
+                        results.flights.push(flight);
+                    }
+                    
+                    results.debug.flightsFound = results.flights.length;
+                    results.debug.errorsCount = results.errors.length;
+                    
+                } catch (e) {
+                    results.errors.push(`Main extraction error: ${e.message}`);
                 }
                 
-                // Strategy 3: Look in HTML for flight numbers
-                const htmlFlightRegex = /AA\\s*\\d{1,4}/gi;
-                const htmlFlights = bodyHTML.match(htmlFlightRegex) || [];
-                flightNumbers = flightNumbers.concat(htmlFlights);
-                
-                console.log('Found flights:', flightNumbers);
-                
-                // Find prices with multiple patterns
-                const pricePatterns = [
-                    /\\$\\s*(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)/g,
-                    /(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)\\s*USD/g,
-                    /(\\d+(?:,\\d{3})*(?:\\.\\d{2})?)\\s*dollars/g
-                ];
-                
-                let prices = [];
-                pricePatterns.forEach(pattern => {
-                    const matches = bodyText.match(pattern) || [];
-                    prices = prices.concat(matches);
-                });
-                
-                // Find times with multiple patterns
-                const timePatterns = [
-                    /\\b([0-2]?[0-9]:[0-5][0-9])\\b/g,
-                    /departure[:\s]*(\\d{1,2}:\\d{2})/gi,
-                    /arrival[:\s]*(\\d{1,2}:\\d{2})/gi
-                ];
-                
-                let times = [];
-                timePatterns.forEach(pattern => {
-                    const matches = bodyText.match(pattern) || [];
-                    times = times.concat(matches);
-                });
-                
-                // Find points with multiple patterns - enhanced for award pricing
-                const pointsPatterns = [
-                    // Look for patterns like "12.5K", "14K", "25K", "32.5K", "53K", "145K"
-                    /(\\d{1,3}(?:\\.\\d)?K)\\s*\\+\\s*\\$/gi,
-                    /(\\d{1,3}(?:\\.\\d)?K)\\s*(?:miles|points|pts)/gi,
-                    /(\\d{1,3}(?:\\.\\d)?K)\\s*AAdvantage/gi,
-                    /(\\d{1,3}(?:\\.\\d)?K)\\s*AA/gi,
-                    /(\\d{1,3}(?:\\.\\d)?K)\\s*award/gi,
-                    /(\\d{1,3}(?:\\.\\d)?K)\\s*redeem/gi,
-                    // Traditional patterns
-                    /(\\d{4,6})\\s*(?:miles|points|pts)/gi,
-                    /(\\d{4,6})\\s*AAdvantage/gi,
-                    /(\\d{4,6})\\s*AA/gi,
-                    /(\\d{4,6})\\s*award/gi,
-                    /(\\d{4,6})\\s*redeem/gi,
-                    /points[:\s]*(\\d{4,6})/gi,
-                    /miles[:\s]*(\\d{4,6})/gi,
-                    /award[:\s]*(\\d{4,6})/gi,
-                    /(\\d{1,2},\\d{3})\\s*(?:miles|points|pts)/gi,
-                    /(\\d{1,2},\\d{3})\\s*AAdvantage/gi,
-                    // Additional patterns for award pricing
-                    /(\\d{4,6})\\s*\\+\\s*\\$/gi,
-                    /(\\d{4,6})\\s*miles?\\s*\\+\\s*\\$/gi,
-                    /(\\d{4,6})\\s*points?\\s*\\+\\s*\\$/gi,
-                    /(\\d{1,2},\\d{3})\\s*miles?\\s*\\+\\s*\\$/gi,
-                    /(\\d{1,2},\\d{3})\\s*points?\\s*\\+\\s*\\$/gi,
-                    // Look for award pricing in different formats
-                    /(\\d{4,6})\\s*miles?\\s*and\\s*\\$/gi,
-                    /(\\d{4,6})\\s*points?\\s*and\\s*\\$/gi,
-                    /(\\d{1,2},\\d{3})\\s*miles?\\s*and\\s*\\$/gi,
-                    /(\\d{1,2},\\d{3})\\s*points?\\s*and\\s*\\$/gi
-                ];
-                
-                let points = [];
-                pointsPatterns.forEach(pattern => {
-                    const matches = bodyText.match(pattern) || [];
-                    points = points.concat(matches);
-                });
-                
-                // Look for specific flight result containers
-                const flightContainers = document.querySelectorAll('[class*="flight"], [class*="trip"], [class*="result"], [class*="option"]');
-                console.log('Found flight containers:', flightContainers.length);
-                
-                // Extract text from flight containers
-                let containerText = '';
-                flightContainers.forEach(container => {
-                    containerText += container.innerText + ' ';
-                });
-                
-                // Try to find more data in containers
-                const containerFlightRegex = /AA\\s*\\d{1,4}/gi;
-                const containerFlights = containerText.match(containerFlightRegex) || [];
-                flightNumbers = flightNumbers.concat(containerFlights);
-                
-                return JSON.stringify({
-                    flights: [...new Set(flightNumbers)],
-                    prices: [...new Set(prices.map(p => p.replace(/[^0-9.]/g, '')))],
-                    times: [...new Set(times)],
-                    points: [...new Set(points.map(p => p.replace(/\\D/g, '')))],
-                    containerCount: flightContainers.length,
-                    bodyTextLength: bodyText.length,
-                    containerTextLength: containerText.length,
-                    bodyText: bodyText  // Include the full body text for points extraction
-                });
+                return JSON.stringify(results);
             }
             """
             
@@ -1108,175 +573,31 @@ class RealMCPPlaywrightScraper:
                     try:
                         data = json.loads(json_str)
                         
-                        logger.info(f"    ✅ Extracted {len(data.get('flights', []))} unique flights")
-                        logger.info(f"    📊 Found {len(data.get('prices', []))} prices, {len(data.get('times', []))} times, {len(data.get('points', []))} points")
-                        logger.info(f"    📦 Flight containers: {data.get('containerCount', 0)}")
+                        flights_data = data.get('flights', [])
+                        errors = data.get('errors', [])
+                        debug = data.get('debug', {})
                         
-                        # Process the data with better validation and improved points matching
-                        flights_data = data.get('flights', [])[:15]  # Increased limit
-                        prices_data = data.get('prices', [])
-                        times_data = data.get('times', [])
-                        points_data = data.get('points', [])
+                        logger.info(f"    ✅ Extracted {len(flights_data)} flights")
+                        logger.info(f"    📊 Debug info: {debug}")
                         
-                        logger.info(f"    📊 Processing {len(flights_data)} flights, {len(prices_data)} prices, {len(times_data)} times, {len(points_data)} points")
+                        if errors:
+                            logger.warning(f"    ⚠️ Extraction errors: {errors}")
                         
-                        # Create a mapping of points to flights by looking for patterns in the page content
-                        # This is a more sophisticated approach to match points with flights
-                        points_mapping = {}
-                        found_awards = []  # Initialize found_awards outside try block
+                        # Convert the flights data to the expected format
+                        for flight_data in flights_data:
+                            flights.append({
+                                "flight_number": flight_data.get('flight_number', 'N/A'),
+                                "departure_time": flight_data.get('departure_time', 'N/A'),
+                                "arrival_time": flight_data.get('arrival_time', 'N/A'),
+                                "points_required": flight_data.get('points_required'),
+                                "cash_price_usd": flight_data.get('cash_price_usd'),
+                                "taxes_fees_usd": flight_data.get('taxes_fees_usd', 5.60),
+                                "cpp": flight_data.get('cpp')
+                            })
                         
-                        # Try to extract points from the page content more systematically
-                        try:
-                            # Look for patterns like "12.5K + $5.60" in the page content
-                            import re
-                            page_content = data.get('bodyText', '')  # Get bodyText from the JavaScript result
-                            
-                            # Find all award pricing patterns
-                            award_patterns = [
-                                r'(\d{1,3}(?:\.\d)?K)\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K + $5.60"
-                                r'(\d{1,3}(?:\.\d)?K)\s*miles?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K miles + $5.60"
-                                r'(\d{1,3}(?:\.\d)?K)\s*points?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K points + $5.60"
-                            ]
-                            
-                            found_awards = []
-                            for pattern in award_patterns:
-                                matches = re.findall(pattern, page_content, re.IGNORECASE)
-                                for match in matches:
-                                    points_str = match[0]
-                                    fees_str = match[1]
-                                    
-                                    # Convert points string to actual points
-                                    if points_str.upper().endswith('K'):
-                                        points_num = float(points_str[:-1])
-                                        actual_points = int(points_num * 1000)
-                                    else:
-                                        actual_points = int(points_str)
-                                    
-                                    found_awards.append({
-                                        'points': actual_points,
-                                        'fees': float(fees_str),
-                                        'points_str': points_str
-                                    })
-                            
-                            award_info = [f"{a['points_str']} ({a['points']} pts)" for a in found_awards]
-                            logger.info(f"    🎯 Found {len(found_awards)} award pricing patterns: {award_info}")
-                            
-                            # Assign points to flights (take the first few awards found)
-                            for i, flight_num in enumerate(flights_data):
-                                if i < len(found_awards):
-                                    points_mapping[flight_num] = found_awards[i]['points']
-                            
-                        except Exception as e:
-                            logger.warning(f"    ⚠️ Error in points mapping: {e}")
-                        
-                        # If we found award pricing, use it for all flights
-                        if found_awards:
-                            logger.info(f"    🎯 Using award pricing for all flights: {len(found_awards)} patterns found")
-                            # Create a simple mapping: assign the first few award patterns to flights
-                            for i, flight_num in enumerate(flights_data):
-                                if i < len(found_awards):
-                                    points_mapping[flight_num] = found_awards[i]['points']
-                                    logger.info(f"    🎯 {flight_num}: Assigned {found_awards[i]['points_str']} ({found_awards[i]['points']} pts)")
-                        
-                        for i, flight_num in enumerate(flights_data):
-                            try:
-                                # Clean flight number
-                                flight_num = flight_num.strip().upper()
-                                if not flight_num.startswith('AA'):
-                                    flight_num = 'AA' + flight_num.replace('AA', '')
-                                
-                                # Get price with better validation
-                                price_str = prices_data[i] if i < len(prices_data) else None
-                                price = None
-                                if price_str:
-                                    try:
-                                        price = float(price_str.replace(',', ''))
-                                        if price < 50:  # Likely missing decimal places
-                                            price = price * 100
-                                    except:
-                                        price = None
-                                
-                                # Get times with better validation
-                                dep_time = times_data[i * 2] if i * 2 < len(times_data) else None
-                                arr_time = times_data[i * 2 + 1] if i * 2 + 1 < len(times_data) else None
-                                
-                                # Validate time format
-                                if dep_time and not re.match(r'^\d{1,2}:\d{2}$', dep_time):
-                                    dep_time = None
-                                if arr_time and not re.match(r'^\d{1,2}:\d{2}$', arr_time):
-                                    arr_time = None
-                                
-                                # Get points - try multiple approaches
-                                points = None
-                                
-                                # Approach 1: Use the points mapping we created
-                                if flight_num in points_mapping:
-                                    points = points_mapping[flight_num]
-                                    logger.info(f"    🎯 {flight_num}: Found points via mapping: {points}")
-                                
-                                # Approach 2: Try the original points list
-                                elif i < len(points_data) and points_data[i]:
-                                    try:
-                                        points_str = points_data[i]
-                                        # Handle "K" format (e.g., "12.5K" = 12,500)
-                                        if points_str.upper().endswith('K'):
-                                            points_num = float(points_str[:-1])  # Remove 'K'
-                                            points = int(points_num * 1000)  # Convert to actual points
-                                        else:
-                                            points = int(points_str)
-                                        
-                                        if points < 1000:  # Likely invalid
-                                            points = None
-                                    except:
-                                        points = None
-                                
-                                # Only add flight if we have meaningful data
-                                if flight_num and (price or points or dep_time):
-                                    cpp = None
-                                    if price and points:
-                                        cpp = ((price - 5.60) / points) * 100
-                                    
-                                    flights.append({
-                                        "flight_number": flight_num,
-                                        "departure_time": dep_time or f"{(8 + i % 12):02d}:00",
-                                        "arrival_time": arr_time or f"{(16 + i % 12):02d}:30",
-                                        "points_required": points,
-                                        "cash_price_usd": round(price, 2) if price else None,
-                                        "taxes_fees_usd": 5.60,
-                                        "cpp": round(cpp, 2) if cpp else None
-                                    })
-                                    
-                                    logger.info(f"    ✈️ {flight_num}: ${price or 'N/A'} or {points or 'N/A'} pts (CPP: {cpp or 'N/A'}¢)")
-                            except Exception as e:
-                                logger.warning(f"    ⚠️ Error processing flight {i}: {e}")
-                                continue
-                        
-                        logger.info(f"  ✅ Extracted {len(flights)} flights from MCP")
-                        logger.info(f"  🔍 Debug: found_awards length = {len(found_awards) if 'found_awards' in locals() else 'not defined'}")
-                        
-                        # If we found award pricing but no flights, create flights from the award data
-                        if not flights and found_awards:
-                            logger.info(f"  🔄 Creating flights from award pricing data...")
-                            for i, award in enumerate(found_awards):
-                                flight_num = f"AA {1000 + i}"  # Generate flight numbers
-                                flight = {
-                                    "flight_number": flight_num,
-                                    "departure_time": "N/A",
-                                    "arrival_time": "N/A", 
-                                    "points_required": award['points'],
-                                    "cash_price_usd": None,
-                                    "taxes_fees_usd": award['fees'],
-                                    "cpp": None
-                                }
-                                flights.append(flight)
-                                logger.info(f"    ✈️ {flight_num}: {award['points_str']} + ${award['fees']}")
-                        elif not flights:
-                            logger.warning(f"  ⚠️ No flights found and no award data available")
-                            logger.warning(f"  🔍 Debug: found_awards = {found_awards}")
-                        
-                        # Always return flights, even if empty
-                        logger.info(f"  📤 Returning {len(flights)} flights")
+                        logger.info(f"  ✅ Processed {len(flights)} flights from improved extraction")
                         return flights
+                        
                     except json.JSONDecodeError as e:
                         logger.warning(f"    ⚠️ JSON parse error: {e}")
                         logger.warning(f"    📄 JSON string: {json_str}")
@@ -1288,25 +609,146 @@ class RealMCPPlaywrightScraper:
             import traceback
             logger.warning(f"    📋 Traceback: {traceback.format_exc()}")
         
-        # Fallback: If we have award data but no flights, create flights from award data
-        if 'found_awards' in locals() and found_awards and not flights:
-            logger.info(f"  🔄 Fallback: Creating flights from award pricing data...")
-            for i, award in enumerate(found_awards):
-                flight_num = f"AA {1000 + i}"  # Generate flight numbers
-                flight = {
-                    "flight_number": flight_num,
-                    "departure_time": "N/A",
-                    "arrival_time": "N/A", 
-                    "points_required": award['points'],
-                    "cash_price_usd": None,
-                    "taxes_fees_usd": award['fees'],
-                    "cpp": None
-                }
-                flights.append(flight)
-                logger.info(f"    ✈️ {flight_num}: {award['points_str']} + ${award['fees']}")
-        
         return flights
     
+    def _extract_award_pricing_alternative(self, flights_data: List[Dict]) -> List[Dict]:
+        """Try alternative methods to extract award pricing"""
+        logger.info("🎯 Trying alternative award pricing extraction...")
+        
+        try:
+            # Get page content for award pricing patterns
+            page_content_result = self._call_mcp_tool('browser_evaluate', function="""
+                () => {
+                    return document.body.innerText;
+                }
+            """)
+            
+            if page_content_result and 'content' in page_content_result:
+                page_content = page_content_result['content'][0]['text']
+                logger.info(f"📄 Got page content for award extraction ({len(page_content)} chars)")
+                
+                # Look for award pricing patterns
+                import re
+                award_patterns = [
+                    r'(\d{1,3}(?:\.\d)?K)\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K + $5.60"
+                    r'(\d{1,3}(?:\.\d)?K)\s*miles?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K miles + $5.60"
+                    r'(\d{1,3}(?:\.\d)?K)\s*points?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12.5K points + $5.60"
+                    r'(\d{4,6})\s*miles?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12500 miles + $5.60"
+                    r'(\d{4,6})\s*points?\s*\+\s*\$(\d+(?:\.\d{2})?)',  # "12500 points + $5.60"
+                ]
+                
+                found_awards = []
+                for pattern in award_patterns:
+                    matches = re.findall(pattern, page_content, re.IGNORECASE)
+                    for match in matches:
+                        points_str = match[0]
+                        fees_str = match[1]
+                        
+                        # Convert points string to actual points
+                        if points_str.upper().endswith('K'):
+                            points_num = float(points_str[:-1])
+                            actual_points = int(points_num * 1000)
+                        else:
+                            actual_points = int(points_str)
+                        
+                        found_awards.append({
+                            'points': actual_points,
+                            'fees': float(fees_str),
+                            'points_str': points_str
+                        })
+                            
+                logger.info(f"🎯 Found {len(found_awards)} award pricing patterns")
+                
+                # Assign award data to flights
+                if found_awards:
+                    logger.info("🔄 Assigning award data to flights...")
+                    for i, flight in enumerate(flights_data):
+                        if i < len(found_awards):
+                            award = found_awards[i]
+                            flight['points_required'] = award['points']
+                            flight['taxes_fees_usd'] = award['fees']
+                            
+                            # Calculate CPP if we have both cash and points
+                            if flight.get('cash_price_usd') and award['points']:
+                                cpp = ((flight['cash_price_usd'] - award['fees']) / award['points']) * 100
+                                flight['cpp'] = round(cpp, 2)
+                                logger.info(f"  ✈️ {flight['flight_number']}: ${flight['cash_price_usd']} or {award['points_str']} + ${award['fees']} (CPP: {cpp:.2f}¢)")
+                            else:
+                                logger.info(f"  ✈️ {flight['flight_number']}: {award['points_str']} + ${award['fees']}")
+                
+                # If still no award data, try to find any points patterns
+                if not found_awards:
+                    logger.info("🔄 Trying broader points patterns...")
+                    broad_patterns = [
+                        r'(\d{1,3}(?:\.\d)?K)\s*(?:miles|points|pts)',  # "12.5K miles"
+                        r'(\d{4,6})\s*(?:miles|points|pts)',  # "12500 miles"
+                        r'(\d{1,2},\d{3})\s*(?:miles|points|pts)',  # "12,500 miles"
+                    ]
+                    
+                    for pattern in broad_patterns:
+                        matches = re.findall(pattern, page_content, re.IGNORECASE)
+                        for match in matches:
+                            points_str = match
+                            if points_str.upper().endswith('K'):
+                                points_num = float(points_str[:-1])
+                                actual_points = int(points_num * 1000)
+                            else:
+                                actual_points = int(points_str.replace(',', ''))
+                            
+                            if actual_points >= 1000:  # Reasonable points range
+                                found_awards.append({
+                                    'points': actual_points,
+                                    'fees': 5.60,  # Default fees
+                                    'points_str': points_str
+                                })
+                    
+                    logger.info(f"🎯 Found {len(found_awards)} broad award patterns")
+                    
+                    # Assign to flights
+                    for i, flight in enumerate(flights_data):
+                        if i < len(found_awards):
+                            award = found_awards[i]
+                            flight['points_required'] = award['points']
+                            flight['taxes_fees_usd'] = award['fees']
+                            
+                            if flight.get('cash_price_usd') and award['points']:
+                                cpp = ((flight['cash_price_usd'] - award['fees']) / award['points']) * 100
+                                flight['cpp'] = round(cpp, 2)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Alternative award extraction failed: {e}")
+        
+        return flights_data
+    
+    def _clean_and_deduplicate_flights(self, flights_data: List[Dict]) -> List[Dict]:
+        """Clean up and deduplicate flight results"""
+        logger.info("🧹 Cleaning and deduplicating flights...")
+        
+        # Remove duplicates based on flight number and key data
+        seen_flights = set()
+        cleaned_flights = []
+        
+        for flight in flights_data:
+            # Create a key for deduplication
+            flight_key = (
+                flight.get('flight_number'),
+                flight.get('departure_time'),
+                flight.get('cash_price_usd'),
+                flight.get('points_required')
+            )
+            
+            if flight_key not in seen_flights:
+                seen_flights.add(flight_key)
+                cleaned_flights.append(flight)
+            else:
+                logger.debug(f"  🗑️ Removed duplicate: {flight.get('flight_number')}")
+        
+        # Sort by flight number for consistency
+        cleaned_flights.sort(key=lambda x: x.get('flight_number', ''))
+        
+        logger.info(f"🧹 Cleaned from {len(flights_data)} to {len(cleaned_flights)} flights")
+        
+        return cleaned_flights
     
     def close(self):
         """Close MCP server"""
