@@ -1,0 +1,21 @@
+# AA.com Scraper Requirements
+# Install these packages to run the AA.com booking page scrapers
+
+# Core scraping libraries
+scrapling>=1.0.0
+crawlee>=1.0.0
+
+# Browser automation dependencies
+playwright>=1.40.0
+
+# Additional utilities
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# For data handling
+pandas>=2.0.0
+numpy>=1.24.0
+
+# For JSON handling and logging
+json5>=0.9.0

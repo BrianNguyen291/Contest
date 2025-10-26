@@ -1,0 +1,12 @@
+AA.com Playwright Browser Automation Results
+===========================================
+Route: LAX → JFK
+Date: December 15, 2025
+Passengers: 1 adult
+Cabin Class: Economy
+Scraped at: 2025-10-26T23:16:40.025826
+Final URL: Unknown
+Page title: Unknown
+Total flights found: 0
+
+File: aa_playwright_results_20251026_231805.json

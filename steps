@@ -1,0 +1,13 @@
+Steps Completed
+First Search (Cash - Revenue Search)
+Opened https://www.aa.com/homePage.do in the existing browser.
+Clicked "One way" on the homepage.
+Typed LAX in "From".
+Typed JFK in "To".
+Opened the calendar and advanced to December 2025, then selected the 15th.
+Number of passengers was already 1.
+Clicked "Search". Loaded a revenue search results page.
+Second Search (Miles - Award Search)
+Clicked the AA logo to return to the homepage.
+Checked "Redeem miles".
+Clicked "Search" again with the same LAX → JFK, December 15, 2025, 1 adult inputs. Loaded the award search results page ("Choose flights - Award").

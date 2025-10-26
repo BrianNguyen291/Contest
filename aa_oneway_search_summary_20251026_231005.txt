@@ -1,0 +1,25 @@
+AA.com One-Way Flight Search Results
+====================================
+Route: Los Angeles (LAX) → New York (JFK)
+Date: December 15, 2025
+Passengers: 1 adult
+Class: Economy (Main Cabin)
+Trip Type: One-Way
+
+Search Details:
+Scraped at: 2025-10-26T23:10:05.613528
+Search URL: https://www.aa.com/booking/find-flights?origin=LAX&destination=JFK&departureDate=12/15/2025&adults=1&children=0&infants=0&tripType=oneWay
+Final URL: https://www.aa.com/booking/search/find-flights?origin=LAX&destination=JFK&departureDate=12%2F15%2F2025&adults=1&children=0&infants=0&tripType=oneWay
+Page title: 
+Flights found: 2
+
+Page Elements:
+  Links: 0
+  Images: 1
+  Forms: 0
+  Inputs: 0
+  Buttons: 0
+  Divs: 0
+  Spans: 0
+
+File: aa_oneway_search_results_20251026_231005.json
